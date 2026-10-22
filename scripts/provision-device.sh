@@ -118,8 +118,22 @@ fi
 
 install -d -o root -g root -m 755 "$CONFIG_DIR" "$NETWORK_DIR"
 install -o root -g root -m 600 "$REPO_DIR/config/examples/hostapd.conf.example" "$HOSTAPD_FILE"
-# Safely replace only the example placeholder; the resulting file is root-only.
-sed -i "s|^wpa_passphrase=.*|wpa_passphrase=$HOTSPOT_PASSWORD|" "$HOSTAPD_FILE"
+# Replace the placeholder literally (no sed metacharacter surprises); config stays root-only.
+STORYBOX_HOTSPOT_PASSWORD="$HOTSPOT_PASSWORD" python3 - "$HOSTAPD_FILE" <<'PY'
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+password = os.environ["STORYBOX_HOTSPOT_PASSWORD"]
+if "wpa_passphrase=REPLACE_WITH_A_UNIQUE_PASSWORD" not in text:
+    raise SystemExit("Expected hotspot password placeholder was not found.")
+path.write_text(text.replace(
+    "wpa_passphrase=REPLACE_WITH_A_UNIQUE_PASSWORD",
+    "wpa_passphrase=" + password,
+))
+PY
 chmod 600 "$HOSTAPD_FILE"
 unset HOTSPOT_PASSWORD
 
