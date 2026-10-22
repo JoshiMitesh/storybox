@@ -2,7 +2,7 @@
 import json, os, re, socket, subprocess, sys, time
 from pathlib import Path
 
-BASE = Path("/home/admin")
+BASE = Path(os.environ.get("STORYBOX_HOME", str(Path.home())))
 CATALOG = BASE / "story-library.json"
 STORIES_DIR = BASE / "stories"
 PROMPTS_DIR = BASE / "story-prompts"
