@@ -60,7 +60,7 @@ done
 [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] ||
   die "Run as an existing non-root user with: sudo bash scripts/provision-device.sh"
 read -r -p "Enter your existing Linux username (the account used with sudo): " STORYBOX_USER
-[[ "$STORYBOX_USER" =~ ^[a-z_][a-z0-9_-]*\$?$ ]] ||
+[[ "$STORYBOX_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] ||
   die "Enter a valid existing Linux username."
 [[ "$STORYBOX_USER" == "$SUDO_USER" ]] ||
   die "For safety, enter the same account that launched sudo ('$SUDO_USER')."
