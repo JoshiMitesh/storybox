@@ -5,9 +5,10 @@ Wants=sound.target
 
 [Service]
 Type=simple
-User=admin
-Group=admin
-WorkingDirectory=/home/admin
+User=STORYBOX_USER_PLACEHOLDER
+Group=STORYBOX_USER_PLACEHOLDER
+Environment=STORYBOX_HOME=/home/STORYBOX_USER_PLACEHOLDER
+WorkingDirectory=/home/STORYBOX_USER_PLACEHOLDER
 ExecStart=/usr/bin/python3 -u /opt/storybox/src/storybox/player/story_player.py
 Restart=on-failure
 RestartSec=3
