@@ -85,7 +85,7 @@ apt-get install -y \
   ca-certificates git python3 \
   mpv gpiod alsa-utils \
   hostapd dnsmasq wpasupplicant iw iproute2 \
-  systemd systemd-networkd
+  systemd
 
 # Make sure the expected libgpiod CLI exists; package names vary between images.
 command -v gpiomon >/dev/null 2>&1 || die "The installed GPIO package did not provide gpiomon. Check the libgpiod package for this Armbian release."
