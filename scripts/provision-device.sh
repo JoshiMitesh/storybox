@@ -206,22 +206,25 @@ if [[ "$failed" -ne 0 ]]; then
   exit 1
 fi
 
-cat <<'EOF'
-StoryBox provisioning finished.
+printf '%s\\n' \
+  "" \
+  "StoryBox provisioning finished." \
+  "" \
+  "Next steps:" \
+  "  1. Connect a phone/laptop to the StoryBox hotspot using the password you set." \
+  "  2. Open http://192.168.4.1 to configure the device's Wi-Fi connection." \
+  "  3. Add licensed story audio files under $STORYBOX_HOME/stories." \
+  "  4. Add matching entries to $STORYBOX_HOME/story-library.json and prompt WAV files under $STORYBOX_HOME/story-prompts." \
+  "  5. Check playback and buttons on the actual hardware." \
+  "" \
+  "StoryBox Linux username: $STORYBOX_USER" \
+  "Keep its login password different from the hotspot password." \
+  "" \
+  "Useful diagnostics:" \
+  "  sudo systemctl status storybox-wpa storybox-wifi storybox-player" \
+  "  sudo journalctl -b -u storybox-wpa -u storybox-wifi -u storybox-player" \
+  "  aplay -l" \
+  "  gpiodetect" \
+  "" \
+  "This installer does not download story content or create welcome.wav."
 
-Next steps:
-  1. Connect a phone/laptop to the StoryBox hotspot using the password you set.
-  2. Open http://192.168.4.1 to configure the device's Wi-Fi connection.
-  3. Add licensed story audio files under /home/admin/stories.
-  4. Add matching entries to /home/admin/story-library.json and prompt WAV files
-     under /home/admin/story-prompts if required by your catalog.
-  5. Check playback and buttons on the actual hardware.
-
-Useful diagnostics:
-  sudo systemctl status storybox-wpa storybox-wifi storybox-player
-  sudo journalctl -b -u storybox-wpa -u storybox-wifi -u storybox-player
-  aplay -l
-  gpiodetect
-
-This installer does not download story content or create welcome.wav.
-EOF
