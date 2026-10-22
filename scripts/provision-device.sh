@@ -55,8 +55,23 @@ do
   need_file "$file"
 done
 
-id admin >/dev/null 2>&1 || die "The current player code uses /home/admin. Create/use the 'admin' device account before provisioning."
-[[ -d /home/admin ]] || die "Expected /home/admin is missing."
+# Ask for a dedicated StoryBox login before making any system changes.
+read -r -p "Choose a new StoryBox username (lowercase letters/numbers, starting with a letter): " STORYBOX_USER
+[[ "$STORYBOX_USER" =~ ^[a-z][a-z0-9_-]{2,31}$ ]] ||
+  die "Username must be 3-32 characters, start with a lowercase letter, and contain only lowercase letters, numbers, _ or -."
+id "$STORYBOX_USER" >/dev/null 2>&1 &&
+  die "User '$STORYBOX_USER' already exists. Choose a new username; this installer will not reset an existing account password."
+
+read -r -s -p "Set a password for '$STORYBOX_USER' (minimum 12 characters): " STORYBOX_USER_PASSWORD
+printf '\n'
+[[ "${#STORYBOX_USER_PASSWORD}" -ge 12 ]] ||
+  die "User password must be at least 12 characters."
+read -r -s -p "Confirm the user password: " STORYBOX_USER_PASSWORD_CONFIRM
+printf '\n'
+[[ "$STORYBOX_USER_PASSWORD" == "$STORYBOX_USER_PASSWORD_CONFIRM" ]] ||
+  die "Passwords do not match."
+unset STORYBOX_USER_PASSWORD_CONFIRM
+STORYBOX_HOME="/home/$STORYBOX_USER"
 [[ ! -e "$INSTALL_DIR" ]] || die "$INSTALL_DIR already exists. This installer is for a fresh device; use scripts/install.sh for the separate migration workflow."
 for unit in "$WIFI_UNIT" "$WPA_UNIT" "$PLAYER_UNIT"; do
   [[ ! -e "$UNIT_DIR/$unit" ]] || die "$UNIT_DIR/$unit already exists. Refusing to overwrite an existing installation."
@@ -84,258 +99,15 @@ log "Preflight passed for $PRETTY_NAME / $(uname -m)."
 # untouched.
 HOTSPOT_PASSWORD="${STORYBOX_HOTSPOT_PASSWORD:-}"
 if [[ -z "$HOTSPOT_PASSWORD" ]]; then
-  read -r -s -p "Set a unique StoryBox hotspot password (8-63 characters): " HOTSPOT_PASSWORD
+  read -r -s -p "Set a DIFFERENT StoryBox hotspot password (8-63 characters): " HOTSPOT_PASSWORD
   printf '\n'
 fi
 [[ "${#HOTSPOT_PASSWORD}" -ge 8 && "${#HOTSPOT_PASSWORD}" -le 63 ]] ||
   die "Hotspot password must be 8-63 characters."
-[[ "$HOTSPOT_PASSWORD" != *
-install -o root -g root -m 600 "$REPO_DIR/config/examples/hostapd.conf.example" "$HOSTAPD_FILE"
-# Replace the placeholder literally (no sed metacharacter surprises); config stays root-only.
-STORYBOX_HOTSPOT_PASSWORD="$HOTSPOT_PASSWORD" python3 - "$HOSTAPD_FILE" <<'PY'
-import os
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-text = path.read_text()
-password = os.environ["STORYBOX_HOTSPOT_PASSWORD"]
-if "wpa_passphrase=REPLACE_WITH_A_UNIQUE_PASSWORD" not in text:
-    raise SystemExit("Expected hotspot password placeholder was not found.")
-path.write_text(text.replace(
-    "wpa_passphrase=REPLACE_WITH_A_UNIQUE_PASSWORD",
-    "wpa_passphrase=" + password,
-))
-PY
-chmod 600 "$HOSTAPD_FILE"
-unset HOTSPOT_PASSWORD
-
-install -o root -g root -m 644 "$REPO_DIR/config/examples/dnsmasq.conf.example" "$DNSMASQ_FILE"
-install -o root -g root -m 600 "$REPO_DIR/config/examples/wpa_supplicant.conf.example" "$WPA_FILE"
-
-log "Installing application and runtime directories."
-install -d -o root -g root -m 755 "$INSTALL_DIR" "$INSTALL_DIR/src" "$INSTALL_DIR/config" "$INSTALL_DIR/systemd"
-cp -a "$REPO_DIR/src/storybox" "$INSTALL_DIR/src/"
-cp -a "$REPO_DIR/config/." "$INSTALL_DIR/config/"
-cp -a "$REPO_DIR/systemd/." "$INSTALL_DIR/systemd/"
-find "$INSTALL_DIR/src/storybox" -type d -name __pycache__ -prune -exec rm -rf {} +
-find "$INSTALL_DIR/src/storybox" -type f -name '*.py[co]' -delete
-chown -R root:root "$INSTALL_DIR"
-chmod 755 "$INSTALL_DIR/src/storybox/wifi/"*.py "$INSTALL_DIR/src/storybox/player/story_player.py"
-
-# Preserve existing story content; only create defaults when absent.
-install -d -o admin -g admin -m 755 /home/admin/stories /home/admin/story-prompts
-if [[ ! -e /home/admin/story-library.json ]]; then
-  install -o admin -g admin -m 644 /dev/null /home/admin/story-library.json
-  printf '[]\n' > /home/admin/story-library.json
-fi
-chown admin:admin /home/admin/story-library.json
-chmod 644 /home/admin/story-library.json
-
-# Allow the player account to read GPIO/audio devices where these groups exist.
-for group in gpio audio; do
-  if getent group "$group" >/dev/null 2>&1; then
-    usermod -aG "$group" admin
-  fi
-done
-if getent group netdev >/dev/null 2>&1; then
-  usermod -aG netdev admin
-fi
-
-install -o root -g root -m 644 "$REPO_DIR/config/network/25-storybox-wlan1.network" "$NETWORK_FILE"
-install -o root -g root -m 644 "$REPO_DIR/systemd/$WIFI_UNIT" "$UNIT_DIR/$WIFI_UNIT"
-install -o root -g root -m 644 "$REPO_DIR/systemd/$WPA_UNIT" "$UNIT_DIR/$WPA_UNIT"
-install -o root -g root -m 644 "$REPO_DIR/systemd/$PLAYER_UNIT" "$UNIT_DIR/$PLAYER_UNIT"
-
-log "Validating configuration and enabling services."
-systemctl enable systemd-networkd.service
-systemctl daemon-reload
-systemd-analyze verify "$UNIT_DIR/$WPA_UNIT" "$UNIT_DIR/$WIFI_UNIT" "$UNIT_DIR/$PLAYER_UNIT"
-bash "$REPO_DIR/scripts/verify.sh"
-
-# The station wpa_supplicant starts first; networkd obtains DHCP; the manager
-# falls back to the setup hotspot when no saved Wi-Fi connection exists.
-systemctl enable "$WPA_UNIT" "$WIFI_UNIT" "$PLAYER_UNIT"
-systemctl restart systemd-networkd.service
-systemctl start "$WPA_UNIT"
-sleep 2
-systemctl start "$WIFI_UNIT"
-systemctl start "$PLAYER_UNIT"
-
-log "Checking service state."
-failed=0
-for unit in systemd-networkd.service "$WPA_UNIT" "$WIFI_UNIT" "$PLAYER_UNIT"; do
-  state="$(systemctl is-active "$unit" 2>/dev/null || true)"
-  printf '  %-32s %s\n' "$unit" "${state:-unknown}"
-  [[ "$state" == active ]] || failed=1
-done
-
-printf '\n'
-if [[ "$failed" -ne 0 ]]; then
-  echo "Provisioning completed with one or more services not active."
-  echo "Inspect logs with: sudo journalctl -b -u $WPA_UNIT -u $WIFI_UNIT -u $PLAYER_UNIT --no-pager"
-  echo "Check hardware, interface names, audio device, and GPIO permissions before rebooting."
-  exit 1
-fi
-
-cat <<'EOF'
-StoryBox provisioning finished.
-
-Next steps:
-  1. Connect a phone/laptop to the StoryBox hotspot using the password you set.
-  2. Open http://192.168.4.1 to configure the device's Wi-Fi connection.
-  3. Add licensed story audio files under /home/admin/stories.
-  4. Add matching entries to /home/admin/story-library.json and prompt WAV files
-     under /home/admin/story-prompts if required by your catalog.
-  5. Check playback and buttons on the actual hardware.
-
-Useful diagnostics:
-  sudo systemctl status storybox-wpa storybox-wifi storybox-player
-  sudo journalctl -b -u storybox-wpa -u storybox-wifi -u storybox-player
-  aplay -l
-  gpiodetect
-
-This installer does not download story content or create welcome.wav.
-EOF
-\n'* && "$HOTSPOT_PASSWORD" != *
-install -o root -g root -m 600 "$REPO_DIR/config/examples/hostapd.conf.example" "$HOSTAPD_FILE"
-# Replace the placeholder literally (no sed metacharacter surprises); config stays root-only.
-STORYBOX_HOTSPOT_PASSWORD="$HOTSPOT_PASSWORD" python3 - "$HOSTAPD_FILE" <<'PY'
-import os
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-text = path.read_text()
-password = os.environ["STORYBOX_HOTSPOT_PASSWORD"]
-if "wpa_passphrase=REPLACE_WITH_A_UNIQUE_PASSWORD" not in text:
-    raise SystemExit("Expected hotspot password placeholder was not found.")
-path.write_text(text.replace(
-    "wpa_passphrase=REPLACE_WITH_A_UNIQUE_PASSWORD",
-    "wpa_passphrase=" + password,
-))
-PY
-chmod 600 "$HOSTAPD_FILE"
-unset HOTSPOT_PASSWORD
-
-install -o root -g root -m 644 "$REPO_DIR/config/examples/dnsmasq.conf.example" "$DNSMASQ_FILE"
-install -o root -g root -m 600 "$REPO_DIR/config/examples/wpa_supplicant.conf.example" "$WPA_FILE"
-
-log "Installing application and runtime directories."
-install -d -o root -g root -m 755 "$INSTALL_DIR" "$INSTALL_DIR/src" "$INSTALL_DIR/config" "$INSTALL_DIR/systemd"
-cp -a "$REPO_DIR/src/storybox" "$INSTALL_DIR/src/"
-cp -a "$REPO_DIR/config/." "$INSTALL_DIR/config/"
-cp -a "$REPO_DIR/systemd/." "$INSTALL_DIR/systemd/"
-find "$INSTALL_DIR/src/storybox" -type d -name __pycache__ -prune -exec rm -rf {} +
-find "$INSTALL_DIR/src/storybox" -type f -name '*.py[co]' -delete
-chown -R root:root "$INSTALL_DIR"
-chmod 755 "$INSTALL_DIR/src/storybox/wifi/"*.py "$INSTALL_DIR/src/storybox/player/story_player.py"
-
-# Preserve existing story content; only create defaults when absent.
-install -d -o admin -g admin -m 755 /home/admin/stories /home/admin/story-prompts
-if [[ ! -e /home/admin/story-library.json ]]; then
-  install -o admin -g admin -m 644 /dev/null /home/admin/story-library.json
-  printf '[]\n' > /home/admin/story-library.json
-fi
-chown admin:admin /home/admin/story-library.json
-chmod 644 /home/admin/story-library.json
-
-# Allow the player account to read GPIO/audio devices where these groups exist.
-for group in gpio audio; do
-  if getent group "$group" >/dev/null 2>&1; then
-    usermod -aG "$group" admin
-  fi
-done
-if getent group netdev >/dev/null 2>&1; then
-  usermod -aG netdev admin
-fi
-
-install -o root -g root -m 644 "$REPO_DIR/config/network/25-storybox-wlan1.network" "$NETWORK_FILE"
-install -o root -g root -m 644 "$REPO_DIR/systemd/$WIFI_UNIT" "$UNIT_DIR/$WIFI_UNIT"
-install -o root -g root -m 644 "$REPO_DIR/systemd/$WPA_UNIT" "$UNIT_DIR/$WPA_UNIT"
-install -o root -g root -m 644 "$REPO_DIR/systemd/$PLAYER_UNIT" "$UNIT_DIR/$PLAYER_UNIT"
-
-log "Validating configuration and enabling services."
-systemctl enable systemd-networkd.service
-systemctl daemon-reload
-systemd-analyze verify "$UNIT_DIR/$WPA_UNIT" "$UNIT_DIR/$WIFI_UNIT" "$UNIT_DIR/$PLAYER_UNIT"
-bash "$REPO_DIR/scripts/verify.sh"
-
-# The station wpa_supplicant starts first; networkd obtains DHCP; the manager
-# falls back to the setup hotspot when no saved Wi-Fi connection exists.
-systemctl enable "$WPA_UNIT" "$WIFI_UNIT" "$PLAYER_UNIT"
-systemctl restart systemd-networkd.service
-systemctl start "$WPA_UNIT"
-sleep 2
-systemctl start "$WIFI_UNIT"
-systemctl start "$PLAYER_UNIT"
-
-log "Checking service state."
-failed=0
-for unit in systemd-networkd.service "$WPA_UNIT" "$WIFI_UNIT" "$PLAYER_UNIT"; do
-  state="$(systemctl is-active "$unit" 2>/dev/null || true)"
-  printf '  %-32s %s\n' "$unit" "${state:-unknown}"
-  [[ "$state" == active ]] || failed=1
-done
-
-printf '\n'
-if [[ "$failed" -ne 0 ]]; then
-  echo "Provisioning completed with one or more services not active."
-  echo "Inspect logs with: sudo journalctl -b -u $WPA_UNIT -u $WIFI_UNIT -u $PLAYER_UNIT --no-pager"
-  echo "Check hardware, interface names, audio device, and GPIO permissions before rebooting."
-  exit 1
-fi
-
-cat <<'EOF'
-StoryBox provisioning finished.
-
-Next steps:
-  1. Connect a phone/laptop to the StoryBox hotspot using the password you set.
-  2. Open http://192.168.4.1 to configure the device's Wi-Fi connection.
-  3. Add licensed story audio files under /home/admin/stories.
-  4. Add matching entries to /home/admin/story-library.json and prompt WAV files
-     under /home/admin/story-prompts if required by your catalog.
-  5. Check playback and buttons on the actual hardware.
-
-Useful diagnostics:
-  sudo systemctl status storybox-wpa storybox-wifi storybox-player
-  sudo journalctl -b -u storybox-wpa -u storybox-wifi -u storybox-player
-  aplay -l
-  gpiodetect
-
-This installer does not download story content or create welcome.wav.
-EOF
-\r'* ]] ||
+[[ "$HOTSPOT_PASSWORD" != *$'\n'* && "$HOTSPOT_PASSWORD" != *$'\r'* ]] ||
   die "Hotspot password must be a single line."
-
-log "Installing system packages. This may take several minutes."
-export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y \
-  ca-certificates git python3 \
-  mpv gpiod alsa-utils \
-  hostapd dnsmasq wpasupplicant iw iproute2 \
-  systemd
-
-# Make sure the expected libgpiod CLI exists; package names vary between images.
-command -v gpiomon >/dev/null 2>&1 || die "The installed GPIO package did not provide gpiomon. Check the libgpiod package for this Armbian release."
-
-log "Checking network services and configuration."
-# StoryBox's Wi-Fi manager owns hostapd and dnsmasq as child processes. Avoid
-# having the package-managed daemons compete for the same interfaces/ports.
-systemctl disable --now hostapd.service >/dev/null 2>&1 || true
-systemctl disable --now dnsmasq.service >/dev/null 2>&1 || true
-
-# StoryBox uses systemd-networkd for DHCP on wlan1. NetworkManager can conflict
-# with this configuration, so this clean-device installer switches to networkd.
-if systemctl is-active --quiet NetworkManager.service; then
-  systemctl disable --now NetworkManager.service
-fi
-if systemctl is-active --quiet NetworkManager; then
-  systemctl disable --now NetworkManager
-fi
-
-log "Writing StoryBox hotspot configuration."
+[[ "$HOTSPOT_PASSWORD" != "$STORYBOX_USER_PASSWORD" ]] ||
+  die "The hotspot password must be different from the StoryBox user password."
 install -d -o root -g root -m 755 "$CONFIG_DIR" "$NETWORK_DIR"
 install -o root -g root -m 600 "$REPO_DIR/config/examples/hostapd.conf.example" "$HOSTAPD_FILE"
 # Replace the placeholder literally (no sed metacharacter surprises); config stays root-only.
@@ -360,6 +132,12 @@ unset HOTSPOT_PASSWORD
 install -o root -g root -m 644 "$REPO_DIR/config/examples/dnsmasq.conf.example" "$DNSMASQ_FILE"
 install -o root -g root -m 600 "$REPO_DIR/config/examples/wpa_supplicant.conf.example" "$WPA_FILE"
 
+log "Creating the dedicated StoryBox user."
+useradd --create-home --shell /bin/bash "$STORYBOX_USER"
+printf '%s:%s\n' "$STORYBOX_USER" "$STORYBOX_USER_PASSWORD" | chpasswd
+unset STORYBOX_USER_PASSWORD
+getent passwd "$STORYBOX_USER" >/dev/null || die "Could not create StoryBox user."
+
 log "Installing application and runtime directories."
 install -d -o root -g root -m 755 "$INSTALL_DIR" "$INSTALL_DIR/src" "$INSTALL_DIR/config" "$INSTALL_DIR/systemd"
 cp -a "$REPO_DIR/src/storybox" "$INSTALL_DIR/src/"
@@ -371,28 +149,31 @@ chown -R root:root "$INSTALL_DIR"
 chmod 755 "$INSTALL_DIR/src/storybox/wifi/"*.py "$INSTALL_DIR/src/storybox/player/story_player.py"
 
 # Preserve existing story content; only create defaults when absent.
-install -d -o admin -g admin -m 755 /home/admin/stories /home/admin/story-prompts
-if [[ ! -e /home/admin/story-library.json ]]; then
-  install -o admin -g admin -m 644 /dev/null /home/admin/story-library.json
-  printf '[]\n' > /home/admin/story-library.json
+install -d -o "$STORYBOX_USER" -g "$STORYBOX_USER" -m 755 "$STORYBOX_HOME/stories" "$STORYBOX_HOME/story-prompts"
+if [[ ! -e "$STORYBOX_HOME/story-library.json" ]]; then
+  install -o "$STORYBOX_USER" -g "$STORYBOX_USER" -m 644 /dev/null "$STORYBOX_HOME/story-library.json"
+  printf '[]\n' > "$STORYBOX_HOME/story-library.json"
 fi
-chown admin:admin /home/admin/story-library.json
-chmod 644 /home/admin/story-library.json
+chown "$STORYBOX_USER:$STORYBOX_USER" "$STORYBOX_HOME/story-library.json"
+chmod 644 "$STORYBOX_HOME/story-library.json"
 
 # Allow the player account to read GPIO/audio devices where these groups exist.
 for group in gpio audio; do
   if getent group "$group" >/dev/null 2>&1; then
-    usermod -aG "$group" admin
+    usermod -aG "$group" "$STORYBOX_USER"
   fi
 done
 if getent group netdev >/dev/null 2>&1; then
-  usermod -aG netdev admin
+  usermod -aG netdev "$STORYBOX_USER"
 fi
 
 install -o root -g root -m 644 "$REPO_DIR/config/network/25-storybox-wlan1.network" "$NETWORK_FILE"
 install -o root -g root -m 644 "$REPO_DIR/systemd/$WIFI_UNIT" "$UNIT_DIR/$WIFI_UNIT"
 install -o root -g root -m 644 "$REPO_DIR/systemd/$WPA_UNIT" "$UNIT_DIR/$WPA_UNIT"
-install -o root -g root -m 644 "$REPO_DIR/systemd/$PLAYER_UNIT" "$UNIT_DIR/$PLAYER_UNIT"
+# Render the player unit with the account selected during setup.
+sed "s/@STORYBOX_USER@/$STORYBOX_USER/g" "$REPO_DIR/systemd/$PLAYER_UNIT" > "$UNIT_DIR/$PLAYER_UNIT"
+chown root:root "$UNIT_DIR/$PLAYER_UNIT"
+chmod 644 "$UNIT_DIR/$PLAYER_UNIT"
 
 log "Validating configuration and enabling services."
 systemctl enable systemd-networkd.service
