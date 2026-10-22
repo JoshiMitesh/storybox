@@ -55,17 +55,20 @@ do
   need_file "$file"
 done
 
-# Select an EXISTING account. Do not create users or change account passwords.
-read -r -p "Enter the existing Linux username to run StoryBox: " STORYBOX_USER
-[[ "$STORYBOX_USER" =~ ^[a-z_][a-z0-9_-]{0,31}\$? ]] ||
+# Select the existing account whose password was used for sudo authentication.
+# This installer never creates users or changes passwords.
+[[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] ||
+  die "Run as an existing non-root user with: sudo bash scripts/provision-device.sh"
+read -r -p "Enter your existing Linux username (the account used with sudo): " STORYBOX_USER
+[[ "$STORYBOX_USER" =~ ^[a-z_][a-z0-9_-]*\$?$ ]] ||
   die "Enter a valid existing Linux username."
+[[ "$STORYBOX_USER" == "$SUDO_USER" ]] ||
+  die "For safety, enter the same account that launched sudo ('$SUDO_USER')."
 id "$STORYBOX_USER" >/dev/null 2>&1 ||
-  die "User '$STORYBOX_USER' does not exist. Create/log into the intended account first; this installer never creates users."
+  die "User '$STORYBOX_USER' does not exist. This installer never creates users."
 STORYBOX_HOME="$(getent passwd "$STORYBOX_USER" | cut -d: -f6)"
-[[ -n "$STORYBOX_HOME" && -d "$STORYBOX_HOME" ]] ||
-  die "Could not find an existing home directory for '$STORYBOX_USER'."
-[[ "$STORYBOX_HOME" != "/" ]] ||
-  die "Refusing to use '/' as the StoryBox home directory."
+[[ -n "$STORYBOX_HOME" && -d "$STORYBOX_HOME" && "$STORYBOX_HOME" != "/" ]] ||
+  die "Could not find a valid existing home directory for '$STORYBOX_USER'."
 [[ ! -e "$INSTALL_DIR" ]] || die "$INSTALL_DIR already exists. This installer is for a fresh device; use scripts/install.sh for the separate migration workflow."
 for unit in "$WIFI_UNIT" "$WPA_UNIT" "$PLAYER_UNIT"; do
   [[ ! -e "$UNIT_DIR/$unit" ]] || die "$UNIT_DIR/$unit already exists. Refusing to overwrite an existing installation."
@@ -93,14 +96,14 @@ log "Preflight passed for $PRETTY_NAME / $(uname -m)."
 # untouched.
 HOTSPOT_PASSWORD="${STORYBOX_HOTSPOT_PASSWORD:-}"
 if [[ -z "$HOTSPOT_PASSWORD" ]]; then
-  read -r -s -p "Set a DIFFERENT StoryBox hotspot password (8-63 characters): " HOTSPOT_PASSWORD
+  read -r -s -p "Set a new StoryBox hotspot password (8-63 characters; do not reuse your login password): " HOTSPOT_PASSWORD
   printf '\n'
 fi
 [[ "${#HOTSPOT_PASSWORD}" -ge 8 && "${#HOTSPOT_PASSWORD}" -le 63 ]] ||
   die "Hotspot password must be 8-63 characters."
 [[ "$HOTSPOT_PASSWORD" != *$'\n'* && "$HOTSPOT_PASSWORD" != *$'\r'* ]] ||
   die "Hotspot password must be a single line."
-# The login password is validated by sudo when the installer is launched.
+# sudo authenticated the existing account before this script started.
 # Never ask for or store the existing account password inside this script.
 install -d -o root -g root -m 755 "$CONFIG_DIR" "$NETWORK_DIR"
 install -o root -g root -m 600 "$REPO_DIR/config/examples/hostapd.conf.example" "$HOSTAPD_FILE"
@@ -207,7 +210,7 @@ printf '%s\\n' \
   "  5. Check playback and buttons on the actual hardware." \
   "" \
   "StoryBox Linux username: $STORYBOX_USER" \
-  "Keep its login password different from the hotspot password." \
+  "For security, the hotspot password must be different from your Linux login password." \
   "" \
   "Useful diagnostics:" \
   "  sudo systemctl status storybox-wpa storybox-wifi storybox-player" \
