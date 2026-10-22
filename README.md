@@ -19,7 +19,8 @@ config/
   examples/          Example configuration templates
   network/           Network configuration template
 scripts/
-  install.sh         Installation/migration helper
+  install.sh         Migration helper for an already-configured device
+  provision-device.sh Fresh-device provisioning (interactive, root required)
   verify.sh          Repository and Python syntax checks
 src/storybox/
   player/            Local story player
@@ -71,9 +72,35 @@ development paths, and the presence of common private runtime files. Passing
 these checks does not prove that all hardware, Wi-Fi, audio, or GPIO behavior
 works on a clean device.
 
+## One-command fresh-device provisioning
+
+On a supported, freshly installed Armbian/Debian/Ubuntu ARM device with the
+expected `admin` account and both Wi-Fi interfaces (`wlan0` for the hotspot,
+`wlan1` for station Wi-Fi), clone the repository and run from a local console:
+
+```bash
+git clone https://github.com/JoshiMitesh/storybox.git
+cd storybox
+sudo bash scripts/provision-device.sh
+```
+
+The script installs system packages, creates protected configuration files,
+installs application files under `/opt/storybox`, creates/enables systemd
+units for Wi-Fi and the player, and checks service state. It prompts for a
+unique hotspot password. Do not run it over SSH: network services are changed.
+
+**Important:** this is a first implementation of the fresh-device bootstrap,
+not yet a production-certified installer. It has not been validated against a
+clean Orange Pi image in this repository's test environment. Test it on a
+spare device or recoverable SD card first. It assumes the `admin` account and
+both `wlan0` and `wlan1` exist. It configures `systemd-networkd` for
+`wlan1` and disables NetworkManager if active, so review this behavior for
+your specific Armbian image. It does not create story audio, `welcome.wav`,
+or a populated story catalog.
+
 ## Installation and migration
 
-**Important:** `scripts/install.sh` is currently a migration helper for an
+**Important:** `scripts/install.sh` remains a migration helper for an
 already-configured development device. It expects existing saved Wi-Fi
 configuration and, if the new configuration files are absent, copies the
 device's existing hotspot and dnsmasq configuration.
