@@ -53,19 +53,26 @@ def start_process(name, args):
     existing = processes.get(name)
 
     if existing and existing.poll() is None:
-        return
+        return True
 
     log(f"Starting {name}")
-
-    processes[name] = subprocess.Popen(
-        args,
-        start_new_session=True
-    )
+    try:
+        processes[name] = subprocess.Popen(
+            args,
+            start_new_session=True
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log(f"ERROR: could not start {name}: {exc}")
+        processes.pop(name, None)
+        return False
 
     time.sleep(1)
-
-    if processes[name].poll() is not None:
-        log(f"ERROR: {name} exited unexpectedly")
+    process = processes[name]
+    if process.poll() is not None:
+        log(f"ERROR: {name} exited unexpectedly (exit code {process.returncode})")
+        processes.pop(name, None)
+        return False
+    return True
 
 
 def stop_process(name):
@@ -88,46 +95,67 @@ def stop_process(name):
 def start_hotspot():
     log("Starting StoryBox hotspot")
 
-    command(
-        "/usr/sbin/ip",
-        "link", "set", HOTSPOT_INTERFACE, "up"
-    )
-
-    result = command(
-        "/usr/sbin/ip",
-        "addr", "show", HOTSPOT_INTERFACE
-    )
-
-    if HOTSPOT_IP.split("/")[0] not in result.stdout:
-        command(
+    try:
+        result = command(
             "/usr/sbin/ip",
-            "addr", "add",
-            HOTSPOT_IP,
-            "dev", HOTSPOT_INTERFACE
+            "link", "set", HOTSPOT_INTERFACE, "up"
         )
+        if result.returncode != 0:
+            log(f"ERROR: cannot bring {HOTSPOT_INTERFACE} up: {result.stderr.strip()}")
+            return False
 
-    start_process(
-        "hostapd",
-        ["/usr/sbin/hostapd", HOTSPOT_CONFIG]
-    )
+        result = command(
+            "/usr/sbin/ip",
+            "addr", "show", HOTSPOT_INTERFACE
+        )
+        if result.returncode != 0:
+            log(f"ERROR: cannot inspect {HOTSPOT_INTERFACE}: {result.stderr.strip()}")
+            return False
 
-    start_process(
-        "dnsmasq",
-        [
-            "/usr/sbin/dnsmasq",
-            "--no-daemon",
-            f"--conf-file={DNSMASQ_CONFIG}"
+        if HOTSPOT_IP.split("/")[0] not in result.stdout:
+            result = command(
+                "/usr/sbin/ip",
+                "addr", "add",
+                HOTSPOT_IP,
+                "dev", HOTSPOT_INTERFACE
+            )
+            if result.returncode != 0 and "File exists" not in result.stderr:
+                log(f"ERROR: cannot assign hotspot IP: {result.stderr.strip()}")
+                return False
+
+        starters = [
+            ("hostapd", ["/usr/sbin/hostapd", HOTSPOT_CONFIG]),
+            ("dnsmasq", [
+                "/usr/sbin/dnsmasq",
+                "--no-daemon",
+                f"--conf-file={DNSMASQ_CONFIG}"
+            ]),
+            ("portal", ["/usr/bin/python3", "-u", PORTAL_SCRIPT]),
         ]
-    )
+        for name, args in starters:
+            if not start_process(name, args):
+                stop_hotspot()
+                return False
 
-    start_process(
-        "portal",
-        [
-            "/usr/bin/python3",
-            "-u",
-            PORTAL_SCRIPT
-        ]
-    )
+        log("Hotspot services started successfully")
+        return True
+    except (OSError, subprocess.SubprocessError) as exc:
+        log(f"ERROR: hotspot startup failed: {exc}")
+        stop_hotspot()
+        return False
+
+
+def hotspot_processes_healthy():
+    expected = ("hostapd", "dnsmasq", "portal")
+    for name in expected:
+        process = processes.get(name)
+        if process is None or process.poll() is not None:
+            if process is not None:
+                log(f"WARNING: {name} exited (exit code {process.returncode}); hotspot needs restart")
+            else:
+                log(f"WARNING: {name} is not running; hotspot needs restart")
+            return False
+    return True
 
 
 def stop_hotspot():
@@ -167,9 +195,12 @@ def main():
             disconnected_count += 1
 
             if disconnected_count >= DISCONNECTED_CHECKS:
+                if hotspot_active and not hotspot_processes_healthy():
+                    stop_hotspot()
+                    hotspot_active = False
+
                 if not hotspot_active:
-                    start_hotspot()
-                    hotspot_active = True
+                    hotspot_active = start_hotspot()
 
         time.sleep(CHECK_INTERVAL)
 
