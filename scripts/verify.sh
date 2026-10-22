@@ -24,6 +24,8 @@ for f in \
     src/storybox/player/story_player.py \
     systemd/storybox-wifi.service \
     systemd/storybox-wpa.service \
+    systemd/storybox-player.service \
+    scripts/provision-device.sh \
     config/examples/hostapd.conf.example \
     config/examples/dnsmasq.conf.example \
     config/examples/wpa_supplicant.conf.example
@@ -35,6 +37,15 @@ do
         fail=1
     fi
 done
+
+echo
+echo "=== Shell syntax ==="
+if bash -n scripts/install.sh scripts/provision-device.sh scripts/verify.sh; then
+    echo "PASS: Shell syntax"
+else
+    echo "FAIL: Shell syntax"
+    fail=1
+fi
 
 echo
 echo "=== Python syntax ==="
