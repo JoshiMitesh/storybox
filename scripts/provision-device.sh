@@ -55,23 +55,17 @@ do
   need_file "$file"
 done
 
-# Ask for a dedicated StoryBox login before making any system changes.
-read -r -p "Choose a new StoryBox username (lowercase letters/numbers, starting with a letter): " STORYBOX_USER
-[[ "$STORYBOX_USER" =~ ^[a-z][a-z0-9_-]{2,31}$ ]] ||
-  die "Username must be 3-32 characters, start with a lowercase letter, and contain only lowercase letters, numbers, _ or -."
-id "$STORYBOX_USER" >/dev/null 2>&1 &&
-  die "User '$STORYBOX_USER' already exists. Choose a new username; this installer will not reset an existing account password."
-
-read -r -s -p "Set a password for '$STORYBOX_USER' (minimum 12 characters): " STORYBOX_USER_PASSWORD
-printf '\n'
-[[ "${#STORYBOX_USER_PASSWORD}" -ge 12 ]] ||
-  die "User password must be at least 12 characters."
-read -r -s -p "Confirm the user password: " STORYBOX_USER_PASSWORD_CONFIRM
-printf '\n'
-[[ "$STORYBOX_USER_PASSWORD" == "$STORYBOX_USER_PASSWORD_CONFIRM" ]] ||
-  die "Passwords do not match."
-unset STORYBOX_USER_PASSWORD_CONFIRM
-STORYBOX_HOME="/home/$STORYBOX_USER"
+# Select an EXISTING account. Do not create users or change account passwords.
+read -r -p "Enter the existing Linux username to run StoryBox: " STORYBOX_USER
+[[ "$STORYBOX_USER" =~ ^[a-z_][a-z0-9_-]{0,31}\$? ]] ||
+  die "Enter a valid existing Linux username."
+id "$STORYBOX_USER" >/dev/null 2>&1 ||
+  die "User '$STORYBOX_USER' does not exist. Create/log into the intended account first; this installer never creates users."
+STORYBOX_HOME="$(getent passwd "$STORYBOX_USER" | cut -d: -f6)"
+[[ -n "$STORYBOX_HOME" && -d "$STORYBOX_HOME" ]] ||
+  die "Could not find an existing home directory for '$STORYBOX_USER'."
+[[ "$STORYBOX_HOME" != "/" ]] ||
+  die "Refusing to use '/' as the StoryBox home directory."
 [[ ! -e "$INSTALL_DIR" ]] || die "$INSTALL_DIR already exists. This installer is for a fresh device; use scripts/install.sh for the separate migration workflow."
 for unit in "$WIFI_UNIT" "$WPA_UNIT" "$PLAYER_UNIT"; do
   [[ ! -e "$UNIT_DIR/$unit" ]] || die "$UNIT_DIR/$unit already exists. Refusing to overwrite an existing installation."
@@ -106,8 +100,8 @@ fi
   die "Hotspot password must be 8-63 characters."
 [[ "$HOTSPOT_PASSWORD" != *$'\n'* && "$HOTSPOT_PASSWORD" != *$'\r'* ]] ||
   die "Hotspot password must be a single line."
-[[ "$HOTSPOT_PASSWORD" != "$STORYBOX_USER_PASSWORD" ]] ||
-  die "The hotspot password must be different from the StoryBox user password."
+# The login password is validated by sudo when the installer is launched.
+# Never ask for or store the existing account password inside this script.
 install -d -o root -g root -m 755 "$CONFIG_DIR" "$NETWORK_DIR"
 install -o root -g root -m 600 "$REPO_DIR/config/examples/hostapd.conf.example" "$HOSTAPD_FILE"
 # Replace the placeholder literally (no sed metacharacter surprises); config stays root-only.
@@ -132,12 +126,7 @@ unset HOTSPOT_PASSWORD
 install -o root -g root -m 644 "$REPO_DIR/config/examples/dnsmasq.conf.example" "$DNSMASQ_FILE"
 install -o root -g root -m 600 "$REPO_DIR/config/examples/wpa_supplicant.conf.example" "$WPA_FILE"
 
-log "Creating the dedicated StoryBox user."
-useradd --create-home --shell /bin/bash "$STORYBOX_USER"
-printf '%s:%s\n' "$STORYBOX_USER" "$STORYBOX_USER_PASSWORD" | chpasswd
-unset STORYBOX_USER_PASSWORD
-getent passwd "$STORYBOX_USER" >/dev/null || die "Could not create StoryBox user."
-
+log "Using existing account '$STORYBOX_USER' with home '$STORYBOX_HOME'."
 log "Installing application and runtime directories."
 install -d -o root -g root -m 755 "$INSTALL_DIR" "$INSTALL_DIR/src" "$INSTALL_DIR/config" "$INSTALL_DIR/systemd"
 cp -a "$REPO_DIR/src/storybox" "$INSTALL_DIR/src/"
