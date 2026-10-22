@@ -76,9 +76,11 @@ works on a clean device.
 
 On a supported, freshly installed Armbian/Debian/Ubuntu ARM device with both
 Wi-Fi interfaces (`wlan0` for the hotspot, `wlan1` for station Wi-Fi), clone
-the repository and run from a local console. The installer asks you to choose a
-new Linux username and password, then asks for a separate hotspot password.
-It refuses to overwrite an existing user and requires the two passwords to differ:
+the repository and run from a local console. Run the command with your existing
+Linux account using `sudo`; sudo authenticates that account's password. The
+installer asks you to enter the same existing username and then asks for a
+separate hotspot password. It never creates a user or changes a Linux password.
+Use a different password for the hotspot:
 
 ```bash
 git clone https://github.com/JoshiMitesh/storybox.git
@@ -86,12 +88,11 @@ cd storybox
 sudo bash scripts/provision-device.sh
 ```
 
-The script creates that dedicated Linux account, uses its home directory for
-the story catalog/audio/prompts, configures the player service to run as that
-account, installs packages and protected configuration files, enables services,
-and checks service state. Choose a strong account password (at least 12
-characters) and a different hotspot password. Do not run it over SSH: network
-services are changed.
+The script uses the existing sudo-authenticated Linux account and its actual
+home directory for the story catalog/audio/prompts, configures the player
+service to run as that account, installs packages and protected configuration
+files, enables services, and checks service state. Choose a separate, strong
+hotspot password. Do not run it over SSH: network services are changed.
 
 **Important:** this is a first implementation of the fresh-device bootstrap,
 not yet a production-certified installer. It has not been validated against a
