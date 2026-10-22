@@ -171,7 +171,7 @@ install -o root -g root -m 644 "$REPO_DIR/config/network/25-storybox-wlan1.netwo
 install -o root -g root -m 644 "$REPO_DIR/systemd/$WIFI_UNIT" "$UNIT_DIR/$WIFI_UNIT"
 install -o root -g root -m 644 "$REPO_DIR/systemd/$WPA_UNIT" "$UNIT_DIR/$WPA_UNIT"
 # Render the player unit with the account selected during setup.
-sed "s/@STORYBOX_USER@/$STORYBOX_USER/g" "$REPO_DIR/systemd/$PLAYER_UNIT" > "$UNIT_DIR/$PLAYER_UNIT"
+sed "s/STORYBOX_USER_PLACEHOLDER/$STORYBOX_USER/g" "$REPO_DIR/systemd/$PLAYER_UNIT" > "$UNIT_DIR/$PLAYER_UNIT"
 chown root:root "$UNIT_DIR/$PLAYER_UNIT"
 chmod 644 "$UNIT_DIR/$PLAYER_UNIT"
 
