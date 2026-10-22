@@ -1,0 +1,7 @@
+ctrl_interface=DIR=/run/wpa_supplicant GROUP=netdev
+update_config=1
+country=IN
+ap_scan=1
+
+# Network credentials are added during device setup.
+# Never commit real SSIDs or passwords to this repository.

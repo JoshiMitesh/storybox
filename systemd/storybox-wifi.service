@@ -1,0 +1,14 @@
+[Unit]
+Description=StoryBox Automatic Wi-Fi Manager
+After=systemd-networkd.service netplan-wpa-wlan1.service
+Wants=systemd-networkd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -u /opt/storybox/src/storybox/wifi/wifi_manager.py
+WorkingDirectory=/opt/storybox/src/storybox/wifi
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

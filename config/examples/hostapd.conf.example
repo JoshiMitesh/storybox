@@ -1,0 +1,12 @@
+# StoryBox Wi-Fi hotspot template
+# Replace the placeholder password before deploying.
+interface=wlan0
+driver=nl80211
+ssid=StoryBox
+hw_mode=g
+channel=6
+country_code=IN
+wpa=2
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+wpa_passphrase=REPLACE_WITH_A_UNIQUE_PASSWORD

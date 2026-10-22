@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Credentials and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*secret*
+wpa_supplicant.conf
+
+# Local runtime data
+stories/
+*.mp3
+*.wav
+story-library.json
+*.db
+*.sqlite3
+*.sock
+*.log
+
+# Backups
+*.bak
+*.backup
+backup/
+backups/
+
+# Editor files
+.vscode/
+.idea/
