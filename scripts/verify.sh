@@ -74,6 +74,21 @@ else
 fi
 
 echo
+echo "=== Dynamic StoryBox account ==="
+if grep -nE '/home/admin|User=admin|Group=admin|STORYBOX_USER_PLACEHOLDER' \
+    scripts/provision-device.sh src/storybox/player/story_player.py; then
+    echo "FAIL: Hard-coded account path or unrendered player placeholder found"
+    fail=1
+else
+    echo "PASS: Provisioning/player source has no hard-coded admin account"
+fi
+if grep -q 'STORYBOX_USER_PLACEHOLDER' systemd/storybox-player.service; then
+    echo "PASS: Player service contains the installer substitution placeholder"
+else
+    echo "FAIL: Player service template placeholder missing"
+    fail=1
+fi
+
 echo "=== Basic credential hygiene ==="
 if find . -type f \( \
     -name 'wpa_supplicant.conf' -o \
