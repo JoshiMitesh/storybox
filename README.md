@@ -74,9 +74,11 @@ works on a clean device.
 
 ## One-command fresh-device provisioning
 
-On a supported, freshly installed Armbian/Debian/Ubuntu ARM device with the
-expected `admin` account and both Wi-Fi interfaces (`wlan0` for the hotspot,
-`wlan1` for station Wi-Fi), clone the repository and run from a local console:
+On a supported, freshly installed Armbian/Debian/Ubuntu ARM device with both
+Wi-Fi interfaces (`wlan0` for the hotspot, `wlan1` for station Wi-Fi), clone
+the repository and run from a local console. The installer asks you to choose a
+new Linux username and password, then asks for a separate hotspot password.
+It refuses to overwrite an existing user and requires the two passwords to differ:
 
 ```bash
 git clone https://github.com/JoshiMitesh/storybox.git
@@ -84,16 +86,17 @@ cd storybox
 sudo bash scripts/provision-device.sh
 ```
 
-The script installs system packages, creates protected configuration files,
-installs application files under `/opt/storybox`, creates/enables systemd
-units for Wi-Fi and the player, and checks service state. It prompts for a
-unique hotspot password. Do not run it over SSH: network services are changed.
+The script creates that dedicated Linux account, uses its home directory for
+the story catalog/audio/prompts, configures the player service to run as that
+account, installs packages and protected configuration files, enables services,
+and checks service state. Choose a strong account password (at least 12
+characters) and a different hotspot password. Do not run it over SSH: network
+services are changed.
 
 **Important:** this is a first implementation of the fresh-device bootstrap,
 not yet a production-certified installer. It has not been validated against a
 clean Orange Pi image in this repository's test environment. Test it on a
-spare device or recoverable SD card first. It assumes the `admin` account and
-both `wlan0` and `wlan1` exist. It configures `systemd-networkd` for
+spare device or recoverable SD card first. It requires both `wlan0` and `wlan1` to exist. It configures `systemd-networkd` for
 `wlan1` and disables NetworkManager if active, so review this behavior for
 your specific Armbian image. It does not create story audio, `welcome.wav`,
 or a populated story catalog.
