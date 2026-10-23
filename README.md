@@ -77,3 +77,32 @@ Manual player run:
 ```bash
 sudo -u admin /usr/bin/python3 /opt/storybox/src/storybox/player/story_player.py
 ```
+
+## QR device-info test
+
+The QR opens the local device-info page (not backend pairing). Connect StoryBox and your phone to the same home Wi-Fi.
+
+Terminal 1 — start the device-info server:
+
+```bash
+cd ~/storybox
+PYTHONPATH=src python3 -u -m storybox.device_info
+```
+
+Terminal 2 — test the API and generate a QR using the current `wlan0` IP:
+
+```bash
+cd ~/storybox
+curl http://127.0.0.1:8088/api/device-info
+PYTHONPATH=src python3 -m storybox.pairing
+```
+
+QR file: `/home/admin/.local/share/storybox/pairing-draft.png`
+
+Optional: copy the QR image to your laptop (replace `<DEVICE_IP>` with the QR URL's IP):
+
+```bash
+scp admin@<DEVICE_IP>:/home/admin/.local/share/storybox/pairing-draft.png .
+```
+
+Open the PNG on your laptop and scan it with your phone. Keep Terminal 1 running while testing.
