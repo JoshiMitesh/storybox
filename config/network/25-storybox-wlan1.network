@@ -1,12 +1,9 @@
+# wlan1 is an AP-only interface managed by StoryBox/hostapd.
+# Do not run DHCP client or IPv6 router advertisements on this interface.
 [Match]
 Name=wlan1
 
 [Network]
-DHCP=yes
-IPv6AcceptRA=yes
-
-[DHCPv4]
-RouteMetric=600
-
-[DHCPv6]
-RouteMetric=600
+DHCP=no
+IPv6AcceptRA=no
+LinkLocalAddressing=no
