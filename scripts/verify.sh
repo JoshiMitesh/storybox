@@ -88,6 +88,29 @@ else
 fi
 
 echo
+echo "=== Captive portal DNS ==="
+if grep -q '^dhcp-option=6,192.168.4.1
+    echo "Verification checks passed."
+else
+    echo "One or more checks failed. Do not commit yet."
+fi
+
+exit "$fail"
+ config/examples/dnsmasq.conf.example && grep -q '^address=/#/192.168.4.1
+    echo "Verification checks passed."
+else
+    echo "One or more checks failed. Do not commit yet."
+fi
+
+exit "$fail"
+ config/examples/dnsmasq.conf.example && grep -q 'GENERAL.NM-MANAGED' src/storybox/wifi/connect_wifi.py; then
+    echo "PASS: Captive DNS and NetworkManager connect helper are configured"
+else
+    echo "FAIL: Captive DNS or NetworkManager connect helper configuration is missing"
+    fail=1
+fi
+
+echo
 if [[ "$fail" -eq 0 ]]; then
     echo "Verification checks passed."
 else
