@@ -1,121 +1,43 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-
-REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_DIR="$(cd -- "$(dirname -- "\${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR="/opt/storybox"
 CONFIG_DIR="/etc/storybox"
 UNIT_DIR="/etc/systemd/system"
-BACKUP_DIR="/var/backups/storybox-install-$(date +%Y%m%d-%H%M%S)"
-
-if [[ "$EUID" -ne 0 ]]; then
-    echo "Run with: sudo $0"
-    exit 1
-fi
-
-# Check all required repository files before making system changes.
-for file in \
-    src/storybox/wifi/wifi_manager.py \
-    src/storybox/wifi/portal.py \
-    src/storybox/wifi/connect_wifi.py \
-    src/storybox/player/story_player.py \
-    config/examples/hostapd.conf.example \
-    config/examples/dnsmasq.conf.example \
-    systemd/storybox-wifi.service \
-    systemd/storybox-wpa.service
-do
-    [[ -f "$REPO_DIR/$file" ]] || {
-        echo "ERROR: Missing repository file: $file"
-        exit 1
-    }
+if [[ "$EUID" -ne 0 ]]; then echo "Run with: sudo $0"; exit 1; fi
+for file in src/storybox/wifi/wifi_manager.py src/storybox/wifi/portal.py src/storybox/wifi/connect_wifi.py src/storybox/player/story_player.py config/examples/hostapd.conf.example config/examples/dnsmasq.conf.example systemd/storybox-wifi.service; do
+  [[ -f "$REPO_DIR/$file" ]] || { echo "ERROR: Missing repository file: $file"; exit 1; }
 done
-
-# Ensure we can preserve the current working device configuration.
-if [[ ! -f "$CONFIG_DIR/wpa_supplicant.conf" ]]; then
-    echo "ERROR: Missing $CONFIG_DIR/wpa_supplicant.conf"
-    echo "Refusing to replace or regenerate saved Wi-Fi credentials."
-    exit 1
-fi
-
-if [[ ! -f "$CONFIG_DIR/hostapd.conf" &&
-      ! -f /home/admin/storybox-hotspot.conf ]]; then
-    echo "ERROR: No existing hotspot configuration to preserve."
-    exit 1
-fi
-
-if [[ ! -f "$CONFIG_DIR/dnsmasq.conf" &&
-      ! -f /home/admin/storybox-dnsmasq.conf ]]; then
-    echo "ERROR: No existing dnsmasq configuration to preserve."
-    exit 1
-fi
-
-echo "Preflight checks passed."
-echo "Repository: $REPO_DIR"
-echo "Install path: $INSTALL_DIR"
-echo "No services will be restarted."
-
-install -d -o root -g root -m 700 "$BACKUP_DIR"
-
-# Back up the existing application before changing it.
-if [[ -d "$INSTALL_DIR" ]]; then
-    cp -a "$INSTALL_DIR" "$BACKUP_DIR/opt-storybox"
-fi
-
-# Back up the existing service unit definitions.
-for unit in storybox-wifi.service storybox-wpa.service; do
-    if [[ -f "$UNIT_DIR/$unit" ]]; then
-        cp -a "$UNIT_DIR/$unit" "$BACKUP_DIR/$unit"
-    fi
-done
-
-install -d -o root -g root -m 755 "$CONFIG_DIR"
-
-# Preserve existing device-specific configuration; never overwrite it.
-if [[ ! -e "$CONFIG_DIR/hostapd.conf" ]]; then
-    install -o root -g root -m 600 \
-        /home/admin/storybox-hotspot.conf \
-        "$CONFIG_DIR/hostapd.conf"
-fi
-
-if [[ ! -e "$CONFIG_DIR/dnsmasq.conf" ]]; then
-    install -o root -g root -m 644 \
-        /home/admin/storybox-dnsmasq.conf \
-        "$CONFIG_DIR/dnsmasq.conf"
-fi
-
-chown root:root "$CONFIG_DIR/wpa_supplicant.conf"
-chmod 600 "$CONFIG_DIR/wpa_supplicant.conf"
-
-# Replace only the application source tree, preserving other installation
-# contents. The previous installation has already been backed up.
-install -d -o root -g root -m 755 \
-    "$INSTALL_DIR" "$INSTALL_DIR/src" \
-    "$INSTALL_DIR/config" "$INSTALL_DIR/systemd"
-
+command -v nmcli >/dev/null || { echo "ERROR: NetworkManager/nmcli is required."; exit 1; }
+command -v openssl >/dev/null || { echo "ERROR: openssl is required to generate a unique hotspot password."; exit 1; }
+managed="$(nmcli -g GENERAL.MANAGED device show wlan0 2>/dev/null || true)"
+if [[ "$managed" != "yes" ]]; then echo "ERROR: wlan0 is not managed by NetworkManager; no changes applied."; exit 1; fi
+install -d -o root -g root -m 700 "$CONFIG_DIR"
+install -d -o root -g root -m 755 "$INSTALL_DIR" "$INSTALL_DIR/src" "$INSTALL_DIR/config" "$INSTALL_DIR/systemd"
+if [[ -f "$CONFIG_DIR/wpa_supplicant.conf" ]]; then chown root:root "$CONFIG_DIR/wpa_supplicant.conf"; chmod 600 "$CONFIG_DIR/wpa_supplicant.conf"; fi
+if [[ ! -f "$CONFIG_DIR/hostapd.conf" ]]; then
+  ap_password="$(openssl rand -hex 8)"
+  sed "s/REPLACE_WITH_GENERATED_PASSWORD/$ap_password/" "$REPO_DIR/config/examples/hostapd.conf.example" > "$CONFIG_DIR/hostapd.conf"
+  chown root:root "$CONFIG_DIR/hostapd.conf"; chmod 600 "$CONFIG_DIR/hostapd.conf"
+  echo "Generated StoryBox-Setup password: $ap_password"
+else echo "Preserving existing hostapd config; ensure interface=wlan1."; fi
+if [[ ! -f "$CONFIG_DIR/dnsmasq.conf" ]]; then
+  install -o root -g root -m 644 "$REPO_DIR/config/examples/dnsmasq.conf.example" "$CONFIG_DIR/dnsmasq.conf"
+else echo "Preserving existing dnsmasq config; ensure interface=wlan1."; fi
 rm -rf "$INSTALL_DIR/src/storybox"
 cp -a "$REPO_DIR/src/storybox" "$INSTALL_DIR/src/"
-
-# Remove generated Python cache files from the installed source.
-find "$INSTALL_DIR/src/storybox" \
-    -type d -name __pycache__ -prune -exec rm -rf {} +
-find "$INSTALL_DIR/src/storybox" \
-    -type f -name '*.py[co]' -delete
-
 cp -a "$REPO_DIR/config/." "$INSTALL_DIR/config/"
 cp -a "$REPO_DIR/systemd/." "$INSTALL_DIR/systemd/"
+find "$INSTALL_DIR/src/storybox" -type d -name __pycache__ -prune -exec rm -rf {} +
+find "$INSTALL_DIR/src/storybox" -type f -name '*.py[co]' -delete
 chown -R root:root "$INSTALL_DIR"
-
-install -o root -g root -m 644 \
-    "$REPO_DIR/systemd/storybox-wifi.service" \
-    "$UNIT_DIR/storybox-wifi.service"
-
-install -o root -g root -m 644 \
-    "$REPO_DIR/systemd/storybox-wpa.service" \
-    "$UNIT_DIR/storybox-wpa.service"
-
+install -o root -g root -m 644 "$REPO_DIR/systemd/storybox-wifi.service" "$UNIT_DIR/storybox-wifi.service"
+# NetworkManager owns wlan0; wlan1 is the setup AP, not a station interface.
+systemctl disable storybox-wpa.service >/dev/null 2>&1 || true
+rm -f "$UNIT_DIR/storybox-wpa.service"
+rm -f /etc/systemd/network/25-storybox-wlan1.network
 systemctl daemon-reload
-
 echo
-echo "Installation files prepared successfully."
-echo "Backup location: $BACKUP_DIR"
-echo "Services were NOT restarted."
-echo "Verify service definitions before scheduling any restart."
+echo "StoryBox files installed without creating backups."
+echo "wlan0 remains managed by NetworkManager; wlan1 is the fallback hotspot."
+echo "The Wi-Fi manager was NOT restarted. Activate it when local access is available."
