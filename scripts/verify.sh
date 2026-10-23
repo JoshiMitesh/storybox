@@ -88,6 +88,22 @@ else
 fi
 
 echo
+echo "=== Fixed StoryBox hotspot password ==="
+if grep -q '^wpa_passphrase=12345678
+    echo "Verification checks passed."
+else
+    echo "One or more checks failed. Do not commit yet."
+fi
+
+exit "$fail"
+ config/examples/hostapd.conf.example && grep -q "wpa_passphrase=12345678" scripts/install.sh; then
+    echo "PASS: Setup hotspot password is fixed to 12345678"
+else
+    echo "FAIL: Setup hotspot password is not fixed to 12345678"
+    fail=1
+fi
+
+echo
 if [[ "$fail" -eq 0 ]]; then
     echo "Verification checks passed."
 else
