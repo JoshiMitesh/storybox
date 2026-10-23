@@ -9,7 +9,6 @@ for file in src/storybox/wifi/wifi_manager.py src/storybox/wifi/portal.py src/st
   [[ -f "$REPO_DIR/$file" ]] || { echo "ERROR: Missing repository file: $file"; exit 1; }
 done
 command -v nmcli >/dev/null || { echo "ERROR: NetworkManager/nmcli is required."; exit 1; }
-command -v openssl >/dev/null || { echo "ERROR: openssl is required to generate a unique hotspot password."; exit 1; }
 # NetworkManager versions expose this property as GENERAL.NM-MANAGED.
 # Check it before touching any system files so unsupported/unmanaged setups fail safely.
 managed="$(nmcli -g GENERAL.NM-MANAGED device show wlan0 2>/dev/null || true)"
@@ -17,15 +16,23 @@ if [[ "$managed" != "yes" ]]; then echo "ERROR: wlan0 is not managed by NetworkM
 install -d -o root -g root -m 700 "$CONFIG_DIR"
 install -d -o root -g root -m 755 "$INSTALL_DIR" "$INSTALL_DIR/src" "$INSTALL_DIR/config" "$INSTALL_DIR/systemd"
 if [[ -f "$CONFIG_DIR/wpa_supplicant.conf" ]]; then chown root:root "$CONFIG_DIR/wpa_supplicant.conf"; chmod 600 "$CONFIG_DIR/wpa_supplicant.conf"; fi
+# The setup hotspot uses a fixed password requested for this device.
+# Enforce it on every installation, including an existing hostapd.conf.
 if [[ ! -f "$CONFIG_DIR/hostapd.conf" ]]; then
-  ap_password="$(openssl rand -hex 8)"
-  sed "s/REPLACE_WITH_GENERATED_PASSWORD/$ap_password/" "$REPO_DIR/config/examples/hostapd.conf.example" > "$CONFIG_DIR/hostapd.conf"
-  chown root:root "$CONFIG_DIR/hostapd.conf"; chmod 600 "$CONFIG_DIR/hostapd.conf"
-  echo "Generated StoryBox-Setup password: $ap_password"
-else
-  sed -i "s/^interface=wlan0$/interface=wlan1/" "$CONFIG_DIR/hostapd.conf"
-  echo "Preserving existing hostapd password and settings; enforcing interface=wlan1."
+  install -o root -g root -m 600 "$REPO_DIR/config/examples/hostapd.conf.example" "$CONFIG_DIR/hostapd.conf"
 fi
+sed -i \
+  -e 's/^interface=.*/interface=wlan1/' \
+  -e 's/^wpa_passphrase=.*/wpa_passphrase=12345678/' \
+  -e '/^wpa_passphrase=/!b' \
+  "$CONFIG_DIR/hostapd.conf"
+if ! grep -q '^wpa_passphrase=' "$CONFIG_DIR/hostapd.conf"; then
+  printf '\nwpa_passphrase=12345678\n' >> "$CONFIG_DIR/hostapd.conf"
+fi
+chown root:root "$CONFIG_DIR/hostapd.conf"
+chmod 600 "$CONFIG_DIR/hostapd.conf"
+echo "StoryBox-Setup password set to the configured fixed password."
+
 if [[ ! -f "$CONFIG_DIR/dnsmasq.conf" ]]; then
   install -o root -g root -m 644 "$REPO_DIR/config/examples/dnsmasq.conf.example" "$CONFIG_DIR/dnsmasq.conf"
 else
