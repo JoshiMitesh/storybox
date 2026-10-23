@@ -1,0 +1,19 @@
+[Unit]
+Description=StoryBox Offline Story Player
+After=local-fs.target sound.target
+Wants=sound.target
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+WorkingDirectory=/home/admin/storybox-repo
+Environment=HOME=/home/admin
+ExecStart=/usr/bin/python3 /home/admin/storybox-repo/src/storybox/player/story_player.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

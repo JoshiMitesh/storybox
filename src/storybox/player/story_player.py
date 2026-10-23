@@ -79,8 +79,24 @@ def main():
             if not match: continue
             line=int(match.group(1)); now=time.monotonic()
             if line in BUTTONS and now-last_press[line]>=DEBOUNCE_SECONDS:
-                last_press[line]=now; handle(BUTTONS[line])
+                last_press[line]=now
+                try:
+                    handle(BUTTONS[line])
+                except Exception as exc:
+                    print(f"Button handler failed: {exc}", flush=True)
     finally:
-        gpio.terminate(); mpv.terminate()
+        gpio.terminate()
+        try:
+            gpio.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            gpio.kill()
+            gpio.wait()
+
+        mpv.terminate()
+        try:
+            mpv.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            mpv.kill()
+            mpv.wait()
 
 if __name__=="__main__": main()

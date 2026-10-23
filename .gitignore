@@ -32,3 +32,6 @@ backups/
 # Editor files
 .vscode/
 .idea/
+
+# Local development backups
+*.pre-*

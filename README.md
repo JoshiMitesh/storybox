@@ -1,3 +1,33 @@
+# StoryBox
+
+## Run Commands
+
+### 1. Start Device Information Server
+```bash
+cd /home/admin/storybox-repo
+PYTHONPATH=src /usr/bin/python3 -u -m storybox.device_info
+```
+
+### 2. Check Device Information API
+```bash
+curl -s http://127.0.0.1:8088/api/device-info
+echo
+```
+
+### 3. Check Device Network
+```bash
+hostname
+ip -4 -br addr
+```
+
+### 4. Generate Pairing QR Code
+```bash
+cd /home/admin/storybox-repo
+PYTHONPATH=src /usr/bin/python3 -m storybox.pairing
+```
+
+---
+
 # StoryBox Device Software
 
 Device-side software for the StoryBox offline audiobook device. This repository
