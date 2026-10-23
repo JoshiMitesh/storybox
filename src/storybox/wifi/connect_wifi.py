@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Connect wlan0 to home Wi-Fi through an explicit NetworkManager profile."""
+"""Connect wlan0 to home Wi-Fi using an explicit WPA-PSK NetworkManager profile."""
 import json
 import subprocess
 import sys
@@ -15,55 +15,56 @@ def run(*args, timeout=15):
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
 
 
+def error_text(result, fallback):
+    return (result.stderr or result.stdout).strip() or fallback
+
+
 def connect(ssid, password):
     if not isinstance(ssid, str) or not 1 <= len(ssid.encode("utf-8")) <= 32:
         raise ValueError("Invalid Wi-Fi network name")
     if not isinstance(password, str) or not 8 <= len(password) <= 63:
-        raise ValueError("Wi-Fi password must be 8-63 characters")
+        raise ValueError("Wi-Fi password must contain 8 to 63 characters")
 
     managed = run(NMCLI, "-g", "GENERAL.NM-MANAGED", "device", "show", INTERFACE)
     if managed.returncode != 0 or managed.stdout.strip().lower() != "yes":
         raise RuntimeError("wlan0 is not managed by NetworkManager")
 
-    # Create an explicit WPA-PSK profile. This avoids NetworkManager's
-    # "802-11-wireless-security key mgmt property is missing" error when
-    # an incomplete profile was left by an earlier setup attempt.
-    existing = run(NMCLI, "-g", "NAME", "connection", "show")
-    profiles = {line.strip() for line in existing.stdout.splitlines()}
-    if PROFILE not in profiles:
-        added = run(
-            NMCLI, "connection", "add", "type", "wifi",
-            "ifname", INTERFACE, "con-name", PROFILE,
-            "ssid", ssid,
-            "wifi-sec.key-mgmt", "wpa-psk",
-            "wifi-sec.psk", password,
-            "ipv4.method", "auto",
-            "connection.autoconnect", "yes",
-            timeout=20,
-        )
-        if added.returncode != 0:
-            raise RuntimeError((added.stderr or added.stdout).strip() or "Unable to create Wi-Fi profile")
-    else:
-        modified = run(
-            NMCLI, "connection", "modify", PROFILE,
-            "connection.type", "802-11-wireless",
-            "802-11-wireless.ssid", ssid,
-            "802-11-wireless-security.key-mgmt", "wpa-psk",
-            "802-11-wireless-security.psk", password,
-            "ipv4.method", "auto",
-            "connection.autoconnect", "yes",
-            timeout=20,
-        )
-        if modified.returncode != 0:
-            raise RuntimeError((modified.stderr or modified.stdout).strip() or "Unable to configure Wi-Fi security")
+    # Rebuild only StoryBox's dedicated profile. This removes any stale profile
+    # that may be missing 802-11-wireless-security.key-mgmt from an earlier try.
+    existing = run(NMCLI, "connection", "delete", PROFILE)
+    if existing.returncode != 0:
+        # A missing profile is normal; continue. Do not expose secrets in errors.
+        pass
+
+    added = run(
+        NMCLI, "connection", "add",
+        "type", "wifi",
+        "ifname", INTERFACE,
+        "con-name", PROFILE,
+        "ssid", ssid,
+        "wifi.mode", "infrastructure",
+        "wifi-sec.key-mgmt", "wpa-psk",
+        "wifi-sec.psk", password,
+        "wifi-sec.psk-flags", "0",
+        "ipv4.method", "auto",
+        "ipv6.method", "auto",
+        "connection.autoconnect", "yes",
+        timeout=20,
+    )
+    if added.returncode != 0:
+        raise RuntimeError(error_text(added, "Unable to create secured Wi-Fi profile"))
+
+    # Verify security fields before activating the profile.
+    security = run(NMCLI, "-g", "802-11-wireless-security.key-mgmt", "connection", "show", PROFILE)
+    if security.returncode != 0 or security.stdout.strip() != "wpa-psk":
+        raise RuntimeError("Could not configure WPA-PSK security for this Wi-Fi profile")
 
     result = run(
         NMCLI, "--wait", "35", "connection", "up", PROFILE,
         "ifname", INTERFACE, timeout=40
     )
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        raise RuntimeError(detail or "Unable to connect to Wi-Fi")
+        raise RuntimeError(error_text(result, "Unable to connect; check the Wi-Fi password and router security mode"))
 
     ip_address = None
     for _ in range(20):
