@@ -1,5 +1,23 @@
 # StoryBox
 
+## Orange Pi dependencies
+
+Install the tools used by the Wi-Fi hotspot, offline audio player, GPIO buttons, QR generator, and device-info API:
+
+```bash
+sudo apt update
+sudo apt install -y git python3 network-manager iw wireless-tools wpasupplicant hostapd dnsmasq mpv gpiod qrencode iproute2 curl alsa-utils
+```
+
+Check installed commands:
+
+```bash
+command -v git python3 nmcli iw wpa_supplicant hostapd dnsmasq mpv gpiomon qrencode ip curl aplay
+gpiomon --version
+```
+
+On the current Armbian/Debian Orange Pi image, install `gpiod` (not `libgpiod-tools`). Python modules used by the current device scripts are from the standard library; no `pip install` is required. The player expects `gpiomon` with `-c`, `-b` and `-e` options, so confirm your installed version supports those options.
+
 ## Wi-Fi setup
 
 - `wlan0`: saved home Wi-Fi, managed by NetworkManager.
@@ -45,14 +63,6 @@ systemctl --no-pager --full status storybox-wifi.service
 sudo journalctl -u storybox-wifi.service -n 100 --no-pager
 pgrep -a 'hostapd|dnsmasq|portal.py' || true
 curl -i --max-time 3 http://192.168.4.1/
-```
-
-### Check required packages
-
-```bash
-sudo apt update
-sudo apt install -y iw wpasupplicant hostapd dnsmasq
-command -v iw wpa_supplicant wpa_cli hostapd dnsmasq
 ```
 
 ### Other device commands
