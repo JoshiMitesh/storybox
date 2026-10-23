@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-REPO_DIR="$(cd -- "$(dirname -- "\${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_DIR="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 INSTALL_DIR="/opt/storybox"
 CONFIG_DIR="/etc/storybox"
 UNIT_DIR="/etc/systemd/system"
@@ -20,10 +20,16 @@ if [[ ! -f "$CONFIG_DIR/hostapd.conf" ]]; then
   sed "s/REPLACE_WITH_GENERATED_PASSWORD/$ap_password/" "$REPO_DIR/config/examples/hostapd.conf.example" > "$CONFIG_DIR/hostapd.conf"
   chown root:root "$CONFIG_DIR/hostapd.conf"; chmod 600 "$CONFIG_DIR/hostapd.conf"
   echo "Generated StoryBox-Setup password: $ap_password"
-else echo "Preserving existing hostapd config; ensure interface=wlan1."; fi
+else
+  sed -i "s/^interface=wlan0$/interface=wlan1/" "$CONFIG_DIR/hostapd.conf"
+  echo "Preserving existing hostapd password and settings; enforcing interface=wlan1."
+fi
 if [[ ! -f "$CONFIG_DIR/dnsmasq.conf" ]]; then
   install -o root -g root -m 644 "$REPO_DIR/config/examples/dnsmasq.conf.example" "$CONFIG_DIR/dnsmasq.conf"
-else echo "Preserving existing dnsmasq config; ensure interface=wlan1."; fi
+else
+  sed -i "s/^interface=wlan0$/interface=wlan1/" "$CONFIG_DIR/dnsmasq.conf"
+  echo "Preserving existing dnsmasq settings; enforcing interface=wlan1."
+fi
 rm -rf "$INSTALL_DIR/src/storybox"
 cp -a "$REPO_DIR/src/storybox" "$INSTALL_DIR/src/"
 cp -a "$REPO_DIR/config/." "$INSTALL_DIR/config/"
