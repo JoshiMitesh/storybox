@@ -79,6 +79,15 @@ else
 fi
 
 echo
+echo "=== NetworkManager CLI compatibility ==="
+if grep -q 'GENERAL.NM-MANAGED device show wlan0' scripts/install.sh && ! grep -q 'GENERAL.MANAGED device show wlan0' scripts/install.sh; then
+    echo "PASS: Installer uses GENERAL.NM-MANAGED"
+else
+    echo "FAIL: Installer NetworkManager managed-status property is incorrect"
+    fail=1
+fi
+
+echo
 if [[ "$fail" -eq 0 ]]; then
     echo "Verification checks passed."
 else
