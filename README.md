@@ -71,7 +71,7 @@ These checks do not prove the hardware, Wi-Fi, captive portal, audio or GPIO wor
 The intended mapping is `wlan0` = home Wi-Fi client managed by NetworkManager and `wlan1` = fallback AP. Confirm both interfaces exist and `wlan1` supports AP mode. Do not run a separate `wpa_supplicant` service on `wlan0`.
 
 ### 3.2 Install Wi-Fi configuration
-Run the repository installer. It creates missing hotspot/DHCP configuration, generates a unique AP password, and prints that password. Existing hotspot settings and passwords are preserved, while the AP interface is normalized to wlan1.
+Run the repository installer. It creates missing hotspot/DHCP configuration and enforces the fixed setup hotspot password `12345678` on every install, including existing hotspot configs. The AP interface is normalized to wlan1.
 
 ```bash
 sudo bash scripts/install.sh
@@ -92,7 +92,7 @@ journalctl -u storybox-wifi.service -n 100 --no-pager
 NetworkManager connects `wlan0`. The manager starts the setup AP on `wlan1` after about 30 seconds without a client connection.
 
 ## 4. First-time phone Wi-Fi setup
-1. Join Wi-Fi network StoryBox-Setup using the password in /etc/storybox/hostapd.conf.
+1. Join Wi-Fi network StoryBox-Setup using password `12345678`.
 2. If the setup page does not open automatically, browse to **http://192.168.4.1/**.
 3. Select home Wi-Fi, enter its password and press Connect to Wi-Fi.
 4. The portal asks NetworkManager to connect `wlan0` and persist the selected network.
@@ -193,7 +193,7 @@ curl -sS --max-time 5 http://127.0.0.1:8088/api/device-info
 - **Buttons fail:** check wiring, GPIO numbering, gpiomon and libgpiod version.
 
 ## 8. Installer behavior
-`scripts/install.sh` is backup-free. It preserves existing device-specific hotspot/DNS configuration and NetworkManager connection profiles, creates missing hotspot configuration with a generated unique password, removes the obsolete standalone StoryBox WPA unit and wlan1 DHCP-client networkd file, and does not restart the Wi-Fi manager automatically.
+`scripts/install.sh` is backup-free. It preserves existing device-specific hotspot/DNS configuration and NetworkManager connection profiles, creates missing hotspot configuration and enforces the fixed password `12345678`, removes the obsolete standalone StoryBox WPA unit and wlan1 DHCP-client networkd file, and does not restart the Wi-Fi manager automatically.
 
 ## 9. Security and development status
 Never commit populated Wi-Fi configs, passwords, keys, tokens, private MP3/WAV files, story catalogs, logs, backups, device identity or generated pairing drafts. Keep Wi-Fi credentials root-owned with mode 600 and replace development passwords before deployment.
