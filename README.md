@@ -24,18 +24,21 @@ systemd/               Wi-Fi units and a player-service draft
 
 ## 1. Requirements and packages
 Recommended target: Armbian/Debian-based Orange Pi PC Plus, user admin, two usable wireless interfaces (wlan0 home Wi-Fi and wlan1 setup hotspot), working audio output and GPIO wiring.
+
+Inspect the device:
 ```bash
 ip -br addr
 iw dev
 rfkill list
 ```
-Install packages:
+
+Install packages on Debian Trixie / Armbian:
 ```bash
 sudo apt update
-sudo apt install -y git python3 iw wireless-tools wpasupplicant hostapd dnsmasq mpv libgpiod-tools qrencode iproute2
+sudo apt install -y git python3 iw wireless-tools wpasupplicant hostapd dnsmasq mpv gpiod qrencode iproute2
 command -v python3 iw wpa_supplicant wpa_cli hostapd dnsmasq mpv gpiomon qrencode
 ```
-Resolve missing commands for your OS before continuing. Wireless AP support and GPIO command compatibility vary by image.
+On Debian Trixie, `gpiomon` is supplied by the `gpiod` package; `libgpiod-tools` may not be available. If a package is unavailable on your image, check `apt-cache search gpiod` and `apt-cache policy <package>` rather than repeatedly installing the unavailable name. Resolve missing commands before continuing. Wireless AP support and GPIO command compatibility vary by image.
 
 ## 2. Clone and verify
 Fresh device:
@@ -45,12 +48,15 @@ git clone https://github.com/JoshiMitesh/storybox.git
 cd /home/admin/storybox
 git switch main
 ```
-Existing clone:
+
+Existing clone: switch to the feature branch containing the current fixes and fast-forward from GitHub:
 ```bash
 cd /home/admin/storybox
-git status --short --branch
-git pull --ff-only
+git fetch origin
+git switch fix/wlan0-client-wlan1-fallback-hotspot
+git pull --ff-only origin fix/wlan0-client-wlan1-fallback-hotspot
 ```
+
 Run checks:
 ```bash
 bash -n scripts/install.sh
@@ -65,34 +71,24 @@ These checks do not prove the hardware, Wi-Fi, captive portal, audio or GPIO wor
 The intended mapping is `wlan0` = home Wi-Fi client managed by NetworkManager and `wlan1` = fallback AP. Confirm both interfaces exist and `wlan1` supports AP mode. Do not run a separate `wpa_supplicant` service on `wlan0`.
 
 ### 3.2 Install Wi-Fi configuration
-
 Run the repository installer. It creates missing hotspot/DHCP configuration, generates a unique AP password, and prints that password. Existing hotspot settings and passwords are preserved, while the AP interface is normalized to wlan1.
 
 ```bash
 sudo bash scripts/install.sh
 ```
 
-The installer is backup-free. It preserves NetworkManager's saved home Wi-Fi profiles and does not restart the Wi-Fi manager automatically.
+The installer is backup-free. It preserves NetworkManager's saved home Wi-Fi profiles and does not restart the Wi-Fi manager automatically. It checks `GENERAL.NM-MANAGED`, the property name reported by the installed NetworkManager CLI version. If it stops before making changes, inspect the exact error first.
 
 ### 3.3 Install and activate
-
 The installer installs the source and service files under `/opt/storybox`. It uses NetworkManager for wlan0 and removes the obsolete standalone StoryBox WPA unit.
 
 When you have local access or a safe recovery route, activate the manager:
-
 ```bash
 sudo systemctl enable --now storybox-wifi.service
 systemctl --no-pager --full status storybox-wifi.service
 journalctl -u storybox-wifi.service -n 100 --no-pager
 ```
 
-
-Only after confirming interface layout and config:
-```bash
-sudo systemctl enable --now storybox-wifi.service
-systemctl --no-pager --full status storybox-wifi.service
-journalctl -u storybox-wifi.service -n 100 --no-pager
-```
 NetworkManager connects `wlan0`. The manager starts the setup AP on `wlan1` after about 30 seconds without a client connection.
 
 ## 4. First-time phone Wi-Fi setup
@@ -116,9 +112,11 @@ Paths used by the current player:
 - Voice prompts: /home/admin/story-prompts/
 - Welcome prompt: /home/admin/story-prompts/welcome.wav
 - MPV IPC socket: /tmp/lunii-player.sock
+
 ```bash
 mkdir -p /home/admin/stories /home/admin/story-prompts
 ```
+
 The catalog is a JSON array; each entry needs filename and prompt values matching existing files:
 ```json
 [
@@ -129,6 +127,7 @@ The catalog is a JSON array; each entry needs filename and prompt values matchin
 ]
 ```
 Save this as /home/admin/story-library.json, put the MP3 in stories/ and matching prompt WAV in story-prompts/. Ensure files are readable by admin. The welcome WAV is optional.
+
 ```bash
 aplay -l
 command -v mpv gpiomon
@@ -150,7 +149,7 @@ Manual player test:
 ```bash
 sudo -u admin /usr/bin/python3 /opt/storybox/src/storybox/player/story_player.py
 ```
-Stop with Ctrl+C. systemd/storybox-player.service.draft is not installed/enabled and contains a legacy path. Create and review a correct service with valid paths and audio/GPIO permissions before enabling boot playback.
+Stop with Ctrl+C. `systemd/storybox-player.service.draft` is not installed/enabled and contains a legacy path. Create and review a correct service with valid paths and audio/GPIO permissions before enabling boot playback.
 
 ## 6. Device ID, info API and development QR
 Device ID is generated once and stored at /home/admin/.local/share/storybox/device.json.
@@ -158,6 +157,7 @@ Device ID is generated once and stored at /home/admin/.local/share/storybox/devi
 cd /opt/storybox
 PYTHONPATH=/opt/storybox/src /usr/bin/python3 -m storybox.device_identity
 ```
+
 Run the development info server in a terminal:
 ```bash
 PYTHONPATH=/opt/storybox/src /usr/bin/python3 -u -m storybox.device_info
@@ -169,7 +169,7 @@ echo
 ```
 Open the page using an IP reachable from the phone, e.g. http://192.168.1.25:8088/ on the same LAN or http://192.168.4.1:8088/ while the hotspot is active.
 
-**QR limitation:** src/storybox/pairing.py currently hard-codes http://192.168.1.25:8088/. Edit DEVICE_INFO_URL in that file to the URL reachable from the phone before generating:
+**QR limitation:** `src/storybox/pairing.py` currently hard-codes http://192.168.1.25:8088/. Edit `DEVICE_INFO_URL` in that file to the URL reachable from the phone before generating:
 ```bash
 PYTHONPATH=/opt/storybox/src /usr/bin/python3 -m storybox.pairing
 ```
