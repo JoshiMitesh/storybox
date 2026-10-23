@@ -1,178 +1,129 @@
-
 #!/usr/bin/env python3
-
+"""Connect wlan0 to home Wi-Fi and safely clean duplicate profiles after success."""
 import json
 import subprocess
 import sys
 import time
+import uuid
 
-INTERFACE = "wlan1"
-WPA_CLI = "/usr/sbin/wpa_cli"
-import os
-
-def wpa(*args):
-    result = subprocess.run(
-        [WPA_CLI, "-i", INTERFACE, *args],
-        capture_output=True,
-        text=True,
-        timeout=15
-    )
-
-    output = result.stdout.strip()
-
-    if (
-        result.returncode != 0
-        or output == "FAIL"
-        or output.startswith("FAIL\n")
-    ):
-        raise RuntimeError("Wi-Fi operation failed")
-
-    return output
+INTERFACE = "wlan0"
+NMCLI = "/usr/bin/nmcli"
+IP = "/usr/sbin/ip"
+PROFILE = "StoryBox Home"
 
 
-def get_status():
-    status = {}
-
-    for line in wpa("status").splitlines():
-        if "=" in line:
-            key, value = line.split("=", 1)
-            status[key] = value
-
-    return status
+def run(*args, timeout=15):
+    return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
 
 
-def current_network_id():
-    for line in wpa("list_networks").splitlines()[1:]:
-        parts = line.split("\t")
+def error_text(result, fallback):
+    return (result.stderr or result.stdout).strip() or fallback
 
-        if len(parts) >= 4 and "[CURRENT]" in parts[3]:
-            return parts[0]
 
-    return None
+def profile_names():
+    result = run(NMCLI, "-t", "-f", "NAME,TYPE", "connection", "show")
+    if result.returncode:
+        return []
+    names = []
+    for line in result.stdout.splitlines():
+        name, sep, kind = line.partition(":")
+        if sep and kind in ("802-11-wireless", "wifi"):
+            names.append(name.replace("\\:", ":"))
+    return names
+
+
+def profile_ssid(name):
+    result = run(NMCLI, "-g", "802-11-wireless.ssid", "connection", "show", name)
+    return result.stdout.rstrip("\n") if result.returncode == 0 else None
+
+
+def delete_profile(name):
+    if name:
+        run(NMCLI, "connection", "delete", name)
 
 
 def connect(ssid, password):
-    if (
-        not isinstance(ssid, str)
-        or not 1 <= len(ssid.encode("utf-8")) <= 32
-    ):
+    if not isinstance(ssid, str) or not 1 <= len(ssid.encode("utf-8")) <= 32:
         raise ValueError("Invalid Wi-Fi network name")
+    if not isinstance(password, str) or not 8 <= len(password) <= 63:
+        raise ValueError("Wi-Fi password must contain 8 to 63 characters")
 
-    if (
-        not isinstance(password, str)
-        or not 8 <= len(password) <= 63
-    ):
-        raise ValueError("Wi-Fi password must be 8-63 characters")
+    managed = run(NMCLI, "-g", "GENERAL.NM-MANAGED", "device", "show", INTERFACE)
+    if managed.returncode != 0 or managed.stdout.strip().lower() != "yes":
+        raise RuntimeError("wlan0 is not managed by NetworkManager")
 
-    previous_id = current_network_id()
-    network_id = wpa("add_network")
+    # Preserve existing saved profiles until the new credentials are proven to work.
+    candidate = "StoryBox-Candidate-" + uuid.uuid4().hex[:8]
+    added = run(
+        NMCLI, "connection", "add",
+        "type", "wifi",
+        "ifname", INTERFACE,
+        "con-name", candidate,
+        "ssid", ssid,
+        "wifi.mode", "infrastructure",
+        "wifi-sec.key-mgmt", "wpa-psk",
+        "wifi-sec.psk", password,
+        "wifi-sec.psk-flags", "0",
+        "ipv4.method", "auto",
+        "ipv6.method", "auto",
+        "connection.autoconnect", "yes",
+        timeout=20,
+    )
+    if added.returncode != 0:
+        raise RuntimeError(error_text(added, "Unable to create secured Wi-Fi profile"))
 
-    if not network_id.isdigit():
-        raise RuntimeError("Unable to create Wi-Fi connection")
+    security = run(NMCLI, "-g", "802-11-wireless-security.key-mgmt", "connection", "show", candidate)
+    if security.returncode != 0 or security.stdout.strip() != "wpa-psk":
+        delete_profile(candidate)
+        raise RuntimeError("Could not configure WPA-PSK security for this Wi-Fi profile")
 
-    try:
-        wpa("set_network", network_id, "ssid", json.dumps(ssid))
-        wpa("set_network", network_id, "psk", json.dumps(password))
+    result = run(NMCLI, "--wait", "35", "connection", "up", candidate, "ifname", INTERFACE, timeout=40)
+    if result.returncode != 0:
+        detail = error_text(result, "Unable to connect; check the Wi-Fi password and router security mode")
+        delete_profile(candidate)
+        raise RuntimeError(detail)
 
-        wpa("enable_network", network_id)
-        wpa("select_network", network_id)
-
-        # Wait for Wi-Fi association and authentication.
-        connected = False
-
-        for _ in range(30):
-            time.sleep(1)
-            status = get_status()
-
-            if (
-                status.get("wpa_state") == "COMPLETED"
-                and status.get("ssid") == ssid
-            ):
-                connected = True
-                break
-
-        if not connected:
-            raise RuntimeError(
-                "Connection timed out. Check Wi-Fi password."
-            )
-
-        # Wait for DHCP to assign an IPv4 address.
-        ip_address = None
-
-        for _ in range(20):
-            time.sleep(1)
-
-            result = subprocess.run(
-                ["/usr/sbin/ip", "-4", "-o", "addr", "show", INTERFACE],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-
-            status = get_status()
-
-            if (
-                status.get("wpa_state") != "COMPLETED"
-                or status.get("ssid") != ssid
-            ):
-                raise RuntimeError(
-                    "Wi-Fi disconnected while obtaining an IP address"
-                )
-
-            for line in result.stdout.splitlines():
-                parts = line.split()
-
-                if "inet" in parts:
-                    ip_address = parts[parts.index("inet") + 1]
+    ip_address = None
+    for _ in range(20):
+        time.sleep(1)
+        addr = run(IP, "-4", "-o", "addr", "show", "dev", INTERFACE)
+        for line in addr.stdout.splitlines():
+            parts = line.split()
+            if "inet" in parts:
+                candidate_ip = parts[parts.index("inet") + 1]
+                if not candidate_ip.startswith("127."):
+                    ip_address = candidate_ip
                     break
+        if ip_address:
+            break
 
-            if ip_address:
-                break
+    if not ip_address:
+        delete_profile(candidate)
+        raise RuntimeError("Wi-Fi connected but no IPv4 address was assigned")
 
-        if not ip_address:
-            raise RuntimeError(
-                "Connected to Wi-Fi but DHCP did not assign an IPv4 address"
-            )
+    # The new profile is working. Now remove the previous StoryBox profile and
+    # duplicate profiles for this same SSID only; keep all other saved networks.
+    for name in profile_names():
+        if name == candidate:
+            continue
+        if name == PROFILE or profile_ssid(name) == ssid:
+            delete_profile(name)
 
-        # Persist the working network for future boots.
-        result = wpa("save_config")
-        os.chown("/etc/storybox/wpa_supplicant.conf", 0, 0)
-        os.chmod("/etc/storybox/wpa_supplicant.conf", 0o600)
+    renamed = run(NMCLI, "connection", "modify", candidate, "connection.id", PROFILE)
+    if renamed.returncode != 0:
+        raise RuntimeError("Connected successfully, but could not name the saved StoryBox profile")
 
-        if result != "OK":
-            raise RuntimeError(
-                "Connected, but could not save Wi-Fi credentials"
-            )
-
-        return {
-            "success": True,
-            "message": f"Connected and saved {ssid}",
-            "ssid": ssid,
-            "ip_address": ip_address
-        }
-
-    except Exception:
-        # Restore the previous connection when possible.
-        try:
-            wpa("remove_network", network_id)
-
-            if previous_id is not None:
-                wpa("enable_network", previous_id)
-                wpa("select_network", previous_id)
-        except Exception:
-            pass
-
-        raise
+    return {
+        "success": True,
+        "message": f"Connected and saved {ssid}",
+        "ssid": ssid,
+        "ip_address": ip_address,
+    }
 
 
 def main():
     data = json.load(sys.stdin)
-
-    result = connect(
-        data.get("ssid", ""),
-        data.get("password", "")
-    )
-
+    result = connect(data.get("ssid", ""), data.get("password", ""))
     print(json.dumps(result))
 
 
@@ -180,8 +131,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        print(json.dumps({
-            "success": False,
-            "message": str(exc)
-        }))
+        print(json.dumps({"success": False, "message": str(exc)}))
         sys.exit(1)

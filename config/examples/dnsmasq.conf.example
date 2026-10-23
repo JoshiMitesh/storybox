@@ -1,5 +1,7 @@
 # StoryBox captive portal DHCP configuration
-interface=wlan0
+interface=wlan1
 bind-interfaces
 listen-address=192.168.4.1
+dhcp-option=6,192.168.4.1
+address=/#/192.168.4.1
 dhcp-range=192.168.4.10,192.168.4.100,255.255.255.0,12h

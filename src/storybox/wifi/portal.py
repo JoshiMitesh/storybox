@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 PORTAL_IP = "192.168.4.1"
 PORTAL_PORT = 80
-WIFI_INTERFACE = "wlan1"
+WIFI_INTERFACE = "wlan0"
 
 CONNECT_SCRIPT = "/opt/storybox/src/storybox/wifi/connect_wifi.py"
 
