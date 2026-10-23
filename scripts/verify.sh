@@ -23,7 +23,6 @@ for f in \
     src/storybox/wifi/connect_wifi.py \
     src/storybox/player/story_player.py \
     systemd/storybox-wifi.service \
-    systemd/storybox-wpa.service \
     config/examples/hostapd.conf.example \
     config/examples/dnsmasq.conf.example \
     config/examples/wpa_supplicant.conf.example
