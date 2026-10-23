@@ -36,9 +36,24 @@ echo "StoryBox-Setup password set to the configured fixed password."
 if [[ ! -f "$CONFIG_DIR/dnsmasq.conf" ]]; then
   install -o root -g root -m 644 "$REPO_DIR/config/examples/dnsmasq.conf.example" "$CONFIG_DIR/dnsmasq.conf"
 else
-  sed -i "s/^interface=wlan0$/interface=wlan1/" "$CONFIG_DIR/dnsmasq.conf"
-  echo "Preserving existing dnsmasq settings; enforcing interface=wlan1."
+  echo "Preserving existing dnsmasq settings; enforcing wlan1 captive-portal DNS."
 fi
+# Ensure DHCP clients use StoryBox for DNS and all hostnames resolve to the portal.
+sed -i \
+  -e '/^interface=/d' \
+  -e '/^listen-address=/d' \
+  -e '/^dhcp-option=6,/d' \
+  -e '/^address=\/#\//d' \
+  "$CONFIG_DIR/dnsmasq.conf"
+cat >> "$CONFIG_DIR/dnsmasq.conf" <<'EOF'
+interface=wlan1
+bind-interfaces
+listen-address=192.168.4.1
+dhcp-option=6,192.168.4.1
+address=/#/192.168.4.1
+EOF
+chown root:root "$CONFIG_DIR/dnsmasq.conf"
+chmod 644 "$CONFIG_DIR/dnsmasq.conf"
 rm -rf "$INSTALL_DIR/src/storybox"
 cp -a "$REPO_DIR/src/storybox" "$INSTALL_DIR/src/"
 cp -a "$REPO_DIR/config/." "$INSTALL_DIR/config/"
