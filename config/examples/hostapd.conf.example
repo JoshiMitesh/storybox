@@ -1,12 +1,14 @@
-# StoryBox Wi-Fi hotspot template
-# Replace the placeholder password before deploying.
-interface=wlan0
+# StoryBox fallback setup hotspot template
+interface=wlan1
 driver=nl80211
-ssid=StoryBox
+country_code=IN
+ssid=StoryBox-Setup
 hw_mode=g
 channel=6
-country_code=IN
+wmm_enabled=1
+auth_algs=1
 wpa=2
 wpa_key_mgmt=WPA-PSK
 rsn_pairwise=CCMP
-wpa_passphrase=REPLACE_WITH_A_UNIQUE_PASSWORD
+# Installer replaces this placeholder with a generated unique password.
+wpa_passphrase=REPLACE_WITH_GENERATED_PASSWORD
