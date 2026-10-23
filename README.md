@@ -64,68 +64,34 @@ These checks do not prove the hardware, Wi-Fi, captive portal, audio or GPIO wor
 ### 3.1 Confirm the interface plan
 The intended mapping is `wlan0` = home Wi-Fi client managed by NetworkManager and `wlan1` = fallback AP. Confirm both interfaces exist and `wlan1` supports AP mode. Do not run a separate `wpa_supplicant` service on `wlan0`.
 
-### 3.2 Create configuration files
-Set a unique hotspot password before use; do not use the placeholder on a deployed device.
-```bash
-sudo install -d -o root -g root -m 755 /etc/storybox
-sudo install -o root -g root -m 600 config/examples/wpa_supplicant.conf.example /etc/storybox/wpa_supplicant.conf
-sudo tee /etc/storybox/hostapd.conf >/dev/null <<'EOF'
-interface=wlan1
-driver=nl80211
-country_code=IN
-ssid=StoryBox-Setup
-hw_mode=g
-channel=6
-wmm_enabled=1
-auth_algs=1
-wpa=2
-wpa_key_mgmt=WPA-PSK
-rsn_pairwise=CCMP
-wpa_passphrase=CHANGE_THIS_TO_A_UNIQUE_PASSWORD
-EOF
-sudo chmod 600 /etc/storybox/hostapd.conf
-sudo tee /etc/storybox/dnsmasq.conf >/dev/null <<'EOF'
-interface=wlan1
-bind-interfaces
-listen-address=192.168.4.1
-dhcp-range=192.168.4.10,192.168.4.100,255.255.255.0,12h
-EOF
-sudo chmod 644 /etc/storybox/dnsmasq.conf
-sudo chown root:root /etc/storybox/wpa_supplicant.conf /etc/storybox/hostapd.conf /etc/storybox/dnsmasq.conf
-sudo chmod 600 /etc/storybox/wpa_supplicant.conf /etc/storybox/hostapd.conf
-sudo nano /etc/storybox/hostapd.conf
-```
-In nano, replace CHANGE_THIS_TO_A_UNIQUE_PASSWORD, save and exit. Never commit populated configs or passwords.
+### 3.2 Install Wi-Fi configuration
 
-### 3.3 Configure the wlan1 access point
-```bash
-sudo install -o root -g root -m 644 config/network/25-storybox-wlan1.network /etc/systemd/network/25-storybox-wlan1.network
-```
-The service template expects systemd-networkd. Check which service currently manages wlan1 before enabling it. Do not enable/restart network managers blindly, especially remotely. If NetworkManager owns wlan1, configure DHCP there instead and avoid competing management.
+Run the repository installer. It creates missing hotspot/DHCP configuration, generates a unique AP password, and prints that password. Existing hotspot settings and passwords are preserved, while the AP interface is normalized to wlan1.
 
-### 3.4 Install application and service files
-The units expect source under /opt/storybox:
 ```bash
-sudo install -d -o root -g root -m 755 /opt/storybox/src /opt/storybox/config /opt/storybox/systemd
-sudo cp -a src/storybox /opt/storybox/src/
-sudo cp -a config/. /opt/storybox/config/
-sudo cp -a systemd/. /opt/storybox/systemd/
-sudo chown -R root:root /opt/storybox
-sudo find /opt/storybox/src/storybox -type d -name __pycache__ -prune -exec rm -rf {} +
-sudo find /opt/storybox/src/storybox -type f -name '*.py[co]' -delete
-sudo install -o root -g root -m 644 systemd/storybox-wpa.service /etc/systemd/system/storybox-wpa.service
-sudo install -o root -g root -m 644 systemd/storybox-wifi.service /etc/systemd/system/storybox-wifi.service
-sudo systemctl daemon-reload
+sudo bash scripts/install.sh
 ```
-The StoryBox Wi-Fi manager starts hostapd, dnsmasq and the portal itself. Do not separately enable stock hostapd.service or dnsmasq.service at the same time; duplicate processes may conflict.
 
-### 3.5 Start the Wi-Fi services
+The installer is backup-free. It preserves NetworkManager's saved home Wi-Fi profiles and does not restart the Wi-Fi manager automatically.
+
+### 3.3 Install and activate
+
+The installer installs the source and service files under `/opt/storybox`. It uses NetworkManager for wlan0 and removes the obsolete standalone StoryBox WPA unit.
+
+When you have local access or a safe recovery route, activate the manager:
+
+```bash
+sudo systemctl enable --now storybox-wifi.service
+systemctl --no-pager --full status storybox-wifi.service
+journalctl -u storybox-wifi.service -n 100 --no-pager
+```
+
+
 Only after confirming interface layout and config:
 ```bash
-sudo systemctl enable --now storybox-wpa.service
 sudo systemctl enable --now storybox-wifi.service
-systemctl --no-pager --full status storybox-wpa.service storybox-wifi.service
-journalctl -u storybox-wpa.service -u storybox-wifi.service -n 100 --no-pager
+systemctl --no-pager --full status storybox-wifi.service
+journalctl -u storybox-wifi.service -n 100 --no-pager
 ```
 NetworkManager connects `wlan0`. The manager starts the setup AP on `wlan1` after about 30 seconds without a client connection.
 
