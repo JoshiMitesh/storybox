@@ -43,7 +43,7 @@ systemctl disable --now storybox-wpa.service >/dev/null 2>&1 || true
 rm -f "$UNIT_DIR/storybox-wpa.service"
 rm -f /etc/systemd/network/25-storybox-wlan1.network
 install -d -o root -g root -m 755 /etc/NetworkManager/conf.d
-cat > /etc/NetworkManager/conf.d/30-storybox-wlan1-unmanaged.conf <<\x27EOF\x27
+cat > /etc/NetworkManager/conf.d/30-storybox-wlan1-unmanaged.conf <<'EOF'
 [keyfile]
 unmanaged-devices=interface-name:wlan1
 EOF
