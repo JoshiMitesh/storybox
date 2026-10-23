@@ -2,7 +2,7 @@
 
 Device-side software for the StoryBox offline audiobook player, targeting Orange Pi PC Plus / Armbian. This README is the setup guide for both the device owner and a new developer.
 
-> **Network design warning:** Current code expects wlan0 to be the temporary StoryBox setup hotspot and wlan1 to connect to home Wi-Fi. When wlan1 connects, the hotspot stops; after about 30 seconds without a station connection, the hotspot starts again. If your board currently uses wlan0 for home Wi-Fi, do not apply this network setup unchanged: it repurposes wlan0 as the hotspot. Move home Wi-Fi to wlan1 first, or update and test code/config consistently. Do not run two network managers on the same interface.
+> **Network design:** `wlan0` is the NetworkManager-managed home Wi-Fi client. `wlan1` is the temporary StoryBox-Setup access point. The manager starts the AP after three 10-second checks without a client connection and stops it after `wlan0` reconnects. The installer does not create backups or automatically restart the Wi-Fi manager.
 
 ## Features and scope
 - Offline MP3 playback and WAV prompts; GPIO playback/menu/volume controls.
@@ -13,8 +13,8 @@ Device-side software for the StoryBox offline audiobook player, targeting Orange
 ## Repository layout
 ```text
 config/examples/       hostapd, dnsmasq and wpa_supplicant templates
-config/network/        systemd-networkd template for wlan1
-scripts/install.sh     migration helper, NOT a clean installer
+config/network/        optional network templates
+scripts/install.sh     backup-free installer
 scripts/verify.sh      basic repository/syntax checks
 src/storybox/player/   offline story player
 src/storybox/wifi/     Wi-Fi manager, portal and connection helper
@@ -23,7 +23,7 @@ systemd/               Wi-Fi units and a player-service draft
 ```
 
 ## 1. Requirements and packages
-Recommended target: Armbian/Debian-based Orange Pi PC Plus, user admin, two usable wireless interfaces (wlan0 hotspot and wlan1 home Wi-Fi), working audio output and GPIO wiring.
+Recommended target: Armbian/Debian-based Orange Pi PC Plus, user admin, two usable wireless interfaces (wlan0 home Wi-Fi and wlan1 setup hotspot), working audio output and GPIO wiring.
 ```bash
 ip -br addr
 iw dev
@@ -62,7 +62,7 @@ These checks do not prove the hardware, Wi-Fi, captive portal, audio or GPIO wor
 
 ## 3. Configure Wi-Fi provisioning
 ### 3.1 Confirm the interface plan
-Current code uses wlan0 as hotspot and wlan1 as station. Confirm both exist and wlan0 supports AP mode before proceeding. If home Wi-Fi currently runs on wlan0, stop until you move it or consistently change/test the interface plan.
+The intended mapping is `wlan0` = home Wi-Fi client managed by NetworkManager and `wlan1` = fallback AP. Confirm both interfaces exist and `wlan1` supports AP mode. Do not run a separate `wpa_supplicant` service on `wlan0`.
 
 ### 3.2 Create configuration files
 Set a unique hotspot password before use; do not use the placeholder on a deployed device.
@@ -70,7 +70,7 @@ Set a unique hotspot password before use; do not use the placeholder on a deploy
 sudo install -d -o root -g root -m 755 /etc/storybox
 sudo install -o root -g root -m 600 config/examples/wpa_supplicant.conf.example /etc/storybox/wpa_supplicant.conf
 sudo tee /etc/storybox/hostapd.conf >/dev/null <<'EOF'
-interface=wlan0
+interface=wlan1
 driver=nl80211
 country_code=IN
 ssid=StoryBox-Setup
@@ -85,7 +85,7 @@ wpa_passphrase=CHANGE_THIS_TO_A_UNIQUE_PASSWORD
 EOF
 sudo chmod 600 /etc/storybox/hostapd.conf
 sudo tee /etc/storybox/dnsmasq.conf >/dev/null <<'EOF'
-interface=wlan0
+interface=wlan1
 bind-interfaces
 listen-address=192.168.4.1
 dhcp-range=192.168.4.10,192.168.4.100,255.255.255.0,12h
@@ -97,7 +97,7 @@ sudo nano /etc/storybox/hostapd.conf
 ```
 In nano, replace CHANGE_THIS_TO_A_UNIQUE_PASSWORD, save and exit. Never commit populated configs or passwords.
 
-### 3.3 Configure DHCP for wlan1
+### 3.3 Configure the wlan1 access point
 ```bash
 sudo install -o root -g root -m 644 config/network/25-storybox-wlan1.network /etc/systemd/network/25-storybox-wlan1.network
 ```
@@ -127,19 +127,19 @@ sudo systemctl enable --now storybox-wifi.service
 systemctl --no-pager --full status storybox-wpa.service storybox-wifi.service
 journalctl -u storybox-wpa.service -u storybox-wifi.service -n 100 --no-pager
 ```
-The station service connects wlan1. The manager starts the setup AP on wlan0 after about 30 seconds without a station connection.
+NetworkManager connects `wlan0`. The manager starts the setup AP on `wlan1` after about 30 seconds without a client connection.
 
 ## 4. First-time phone Wi-Fi setup
 1. Join Wi-Fi network StoryBox-Setup using the password in /etc/storybox/hostapd.conf.
 2. If the setup page does not open automatically, browse to **http://192.168.4.1/**.
 3. Select home Wi-Fi, enter its password and press Connect to Wi-Fi.
-4. The portal connects wlan1 with wpa_cli and saves credentials in /etc/storybox/wpa_supplicant.conf.
+4. The portal asks NetworkManager to connect `wlan0` and persist the selected network.
 5. When connected, the setup hotspot stops and the phone may disconnect. This is expected.
 6. Confirm connection:
 ```bash
 ip -4 -br addr
-sudo wpa_cli -i wlan1 status
-sudo wpa_cli -i wlan1 list_networks
+nmcli -f DEVICE,STATE,CONNECTION device status
+nmcli connection show --active
 ```
 When the saved network is unavailable, the setup hotspot should return after three manager checks.
 
@@ -213,7 +213,7 @@ QR PNG and draft JSON are stored under /home/admin/.local/share/storybox/. This 
 ```bash
 ip -br addr
 iw dev
-sudo wpa_cli -i wlan1 status
+nmcli -f DEVICE,STATE,CONNECTION device status
 systemctl --no-pager --full status storybox-wpa.service storybox-wifi.service
 journalctl -u storybox-wpa.service -u storybox-wifi.service -n 100 --no-pager
 pgrep -a 'hostapd|dnsmasq|portal.py' || true
@@ -221,13 +221,13 @@ curl -sS --max-time 5 http://127.0.0.1:8088/api/device-info
 ```
 - **No wlan1:** check adapter, driver and rfkill; not every board has two interfaces.
 - **Hotspot not visible:** inspect service logs, AP-mode support, and hostapd config/password.
-- **Portal won't open:** browse to http://192.168.4.1/; check dnsmasq, portal process and wlan0 address.
+- **Portal won't open:** browse to http://192.168.4.1/; check dnsmasq, portal process and wlan1 address.
 - **Credentials not saved:** inspect logs and ensure /etc/storybox/wpa_supplicant.conf is root-owned with mode 600.
 - **No sound:** test ALSA/MPV and verify story paths.
 - **Buttons fail:** check wiring, GPIO numbering, gpiomon and libgpiod version.
 
-## 8. Migration helper
-scripts/install.sh is a migration helper, not a clean-device installer. It requires an existing saved Wi-Fi config and existing hotspot/dnsmasq configs to preserve. It backs up files, installs source under /opt/storybox, prepares Wi-Fi units and reloads systemd; it does not restart services. Review it and take a backup before using on an already-configured device.
+## 8. Installer behavior
+`scripts/install.sh` is backup-free. It preserves existing device-specific hotspot/DNS configuration and NetworkManager connection profiles, creates missing hotspot configuration with a generated unique password, removes the obsolete standalone StoryBox WPA unit and wlan1 DHCP-client networkd file, and does not restart the Wi-Fi manager automatically.
 
 ## 9. Security and development status
 Never commit populated Wi-Fi configs, passwords, keys, tokens, private MP3/WAV files, story catalogs, logs, backups, device identity or generated pairing drafts. Keep Wi-Fi credentials root-owned with mode 600 and replace development passwords before deployment.
