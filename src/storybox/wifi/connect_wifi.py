@@ -24,7 +24,7 @@ def connect(ssid, password):
         raise ValueError("Wi-Fi password must be 8-63 characters")
 
     # Ensure the target interface is managed by NetworkManager.
-    managed = run(NMCLI, "-g", "GENERAL.MANAGED", "device", "show", INTERFACE)
+    managed = run(NMCLI, "-g", "GENERAL.NM-MANAGED", "device", "show", INTERFACE)
     if managed.returncode != 0 or managed.stdout.strip().lower() != "yes":
         raise RuntimeError("wlan0 is not managed by NetworkManager")
 
