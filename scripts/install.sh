@@ -39,9 +39,15 @@ find "$INSTALL_DIR/src/storybox" -type f -name '*.py[co]' -delete
 chown -R root:root "$INSTALL_DIR"
 install -o root -g root -m 644 "$REPO_DIR/systemd/storybox-wifi.service" "$UNIT_DIR/storybox-wifi.service"
 # NetworkManager owns wlan0; wlan1 is the setup AP, not a station interface.
-systemctl disable storybox-wpa.service >/dev/null 2>&1 || true
+systemctl disable --now storybox-wpa.service >/dev/null 2>&1 || true
 rm -f "$UNIT_DIR/storybox-wpa.service"
 rm -f /etc/systemd/network/25-storybox-wlan1.network
+install -d -o root -g root -m 755 /etc/NetworkManager/conf.d
+cat > /etc/NetworkManager/conf.d/30-storybox-wlan1-unmanaged.conf <<\x27EOF\x27
+[keyfile]
+unmanaged-devices=interface-name:wlan1
+EOF
+nmcli device set wlan1 managed no >/dev/null 2>&1 || true
 systemctl daemon-reload
 echo
 echo "StoryBox files installed without creating backups."
