@@ -10,8 +10,10 @@ for file in src/storybox/wifi/wifi_manager.py src/storybox/wifi/portal.py src/st
 done
 command -v nmcli >/dev/null || { echo "ERROR: NetworkManager/nmcli is required."; exit 1; }
 command -v openssl >/dev/null || { echo "ERROR: openssl is required to generate a unique hotspot password."; exit 1; }
-managed="$(nmcli -g GENERAL.MANAGED device show wlan0 2>/dev/null || true)"
-if [[ "$managed" != "yes" ]]; then echo "ERROR: wlan0 is not managed by NetworkManager; no changes applied."; exit 1; fi
+# NetworkManager versions expose this property as GENERAL.NM-MANAGED.
+# Check it before touching any system files so unsupported/unmanaged setups fail safely.
+managed="$(nmcli -g GENERAL.NM-MANAGED device show wlan0 2>/dev/null || true)"
+if [[ "$managed" != "yes" ]]; then echo "ERROR: wlan0 is not managed by NetworkManager (NM-MANAGED=$managed); no changes applied."; exit 1; fi
 install -d -o root -g root -m 700 "$CONFIG_DIR"
 install -d -o root -g root -m 755 "$INSTALL_DIR" "$INSTALL_DIR/src" "$INSTALL_DIR/config" "$INSTALL_DIR/systemd"
 if [[ -f "$CONFIG_DIR/wpa_supplicant.conf" ]]; then chown root:root "$CONFIG_DIR/wpa_supplicant.conf"; chmod 600 "$CONFIG_DIR/wpa_supplicant.conf"; fi
