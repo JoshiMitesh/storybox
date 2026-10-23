@@ -1,10 +1,13 @@
 [Unit]
-Description=StoryBox Automatic Wi-Fi Manager
-After=systemd-networkd.service netplan-wpa-wlan1.service
-Wants=systemd-networkd.service
+Description=StoryBox Automatic Wi-Fi Fallback Hotspot Manager
+After=NetworkManager.service
+Wants=NetworkManager.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
+ExecStartPre=/usr/bin/nmcli radio wifi on
 ExecStart=/usr/bin/python3 -u /opt/storybox/src/storybox/wifi/wifi_manager.py
 WorkingDirectory=/opt/storybox/src/storybox/wifi
 Restart=always
