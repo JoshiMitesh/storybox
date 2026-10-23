@@ -10,5 +10,5 @@ auth_algs=1
 wpa=2
 wpa_key_mgmt=WPA-PSK
 rsn_pairwise=CCMP
-# Installer replaces this placeholder with a generated unique password.
-wpa_passphrase=REPLACE_WITH_GENERATED_PASSWORD
+# Fixed setup hotspot password (requested for this device).
+wpa_passphrase=12345678
