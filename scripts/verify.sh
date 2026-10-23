@@ -6,15 +6,6 @@ cd "$ROOT"
 
 fail=0
 
-check() {
-    if "$@"; then
-        echo "PASS: $*"
-    else
-        echo "FAIL: $*"
-        fail=1
-    fi
-}
-
 echo "=== Required repository files ==="
 for f in \
     README.md \
@@ -89,14 +80,7 @@ fi
 
 echo
 echo "=== Fixed StoryBox hotspot password ==="
-if grep -q '^wpa_passphrase=12345678
-    echo "Verification checks passed."
-else
-    echo "One or more checks failed. Do not commit yet."
-fi
-
-exit "$fail"
- config/examples/hostapd.conf.example && grep -q "wpa_passphrase=12345678" scripts/install.sh; then
+if grep -q '^wpa_passphrase=12345678$' config/examples/hostapd.conf.example && grep -q 'wpa_passphrase=12345678' scripts/install.sh; then
     echo "PASS: Setup hotspot password is fixed to 12345678"
 else
     echo "FAIL: Setup hotspot password is not fixed to 12345678"
