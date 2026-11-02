@@ -140,7 +140,257 @@ if [[ ! -s "$CONFIG_DIR/hostapd.conf" ]]; then
     install -o root -g root -m 600 \
         "$REPO_DIR/config/examples/hostapd.conf.example" "$CONFIG_DIR/hostapd.conf"
 fi
-if ! grep -Eq '^wpa_passphrase=[A-Za-z0-9]{8,63}$' "$CONFIG_DIR/hostapd.conf"; then
+if ! grep -Eq '^wpa_passphrase=[A-Za-z0-9]{8,63}
+    hotspot_password="$(python3 -c 'import secrets; print(secrets.token_hex(9))')"
+    if grep -q '^wpa_passphrase=' "$CONFIG_DIR/hostapd.conf"; then
+        sed -i "s/^wpa_passphrase=.*/wpa_passphrase=$hotspot_password/" "$CONFIG_DIR/hostapd.conf"
+    else
+        printf '\nwpa_passphrase=%s\n' "$hotspot_password" >> "$CONFIG_DIR/hostapd.conf"
+    fi
+else
+    hotspot_password="$(sed -n 's/^wpa_passphrase=//p' "$CONFIG_DIR/hostapd.conf" | head -n1)"
+fi
+if grep -q '^interface=' "$CONFIG_DIR/hostapd.conf"; then
+    sed -i 's/^interface=.*/interface=wlan1/' "$CONFIG_DIR/hostapd.conf"
+else
+    printf '\ninterface=wlan1\n' >> "$CONFIG_DIR/hostapd.conf"
+fi
+chown root:root "$CONFIG_DIR/hostapd.conf"
+chmod 600 "$CONFIG_DIR/hostapd.conf"
+
+if [[ ! -s "$CONFIG_DIR/dnsmasq.conf" ]]; then
+    install -o root -g root -m 644 \
+        "$REPO_DIR/config/examples/dnsmasq.conf.example" "$CONFIG_DIR/dnsmasq.conf"
+fi
+sed -i \
+    -e '/^interface=/d' \
+    -e '/^listen-address=/d' \
+    -e '/^dhcp-option=6,/d' \
+    -e '/^address=\/#\//d' \
+    "$CONFIG_DIR/dnsmasq.conf"
+grep -q '^bind-interfaces$' "$CONFIG_DIR/dnsmasq.conf" || printf 'bind-interfaces\n' >> "$CONFIG_DIR/dnsmasq.conf"
+grep -q '^dhcp-range=' "$CONFIG_DIR/dnsmasq.conf" || \
+    printf 'dhcp-range=192.168.4.10,192.168.4.100,255.255.255.0,12h\n' >> "$CONFIG_DIR/dnsmasq.conf"
+cat >> "$CONFIG_DIR/dnsmasq.conf" <<'EOF'
+interface=wlan1
+listen-address=192.168.4.1
+dhcp-option=6,192.168.4.1
+address=/#/192.168.4.1
+EOF
+chown root:root "$CONFIG_DIR/dnsmasq.conf"
+chmod 644 "$CONFIG_DIR/dnsmasq.conf"
+
+install -d -o root -g root -m 755 /etc/NetworkManager/conf.d
+cat > /etc/NetworkManager/conf.d/30-storybox-wlan1-unmanaged.conf <<'EOF'
+[keyfile]
+unmanaged-devices=interface-name:wlan1
+EOF
+nmcli device set wlan1 managed no >/dev/null 2>&1 || true
+
+# The distro hostapd/dnsmasq units must not compete with the Wi-Fi manager,
+# which starts and stops its own foreground processes during fallback.
+systemctl disable --now hostapd.service dnsmasq.service >/dev/null 2>&1 || true
+
+log "Installing systemd services"
+cat > "$TMP_DIR/storybox-player.service" <<'EOF'
+[Unit]
+Description=StoryBox Offline Audio Player
+After=multi-user.target sound.target
+Wants=sound.target
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+SupplementaryGroups=gpio audio
+WorkingDirectory=/home/admin
+ExecStart=/usr/bin/python3 -u /opt/storybox/src/storybox/player/story_player.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+KillMode=control-group
+Environment=HOME=/home/admin
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > "$TMP_DIR/storybox-watcher.service" <<'EOF'
+[Unit]
+Description=StoryBox Automatic Story and Prompt Generator
+After=local-fs.target
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+SupplementaryGroups=audio
+WorkingDirectory=/home/admin
+ExecStart=/usr/bin/python3 -u /opt/storybox/scripts/storybox_watcher.py
+Restart=always
+RestartSec=3
+Environment=HOME=/home/admin
+Environment=LD_LIBRARY_PATH=/opt/piper
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+install -o root -g root -m 644 "$TMP_DIR/storybox-player.service" "$UNIT_DIR/storybox-player.service"
+install -o root -g root -m 644 "$TMP_DIR/storybox-watcher.service" "$UNIT_DIR/storybox-watcher.service"
+install -o root -g root -m 644 "$REPO_DIR/systemd/storybox-wifi.service" "$UNIT_DIR/storybox-wifi.service"
+
+systemctl disable --now storybox-wpa.service >/dev/null 2>&1 || true
+rm -f "$UNIT_DIR/storybox-wpa.service"
+
+systemctl daemon-reload
+systemd-analyze verify \
+    "$UNIT_DIR/storybox-player.service" \
+    "$UNIT_DIR/storybox-watcher.service" \
+    "$UNIT_DIR/storybox-wifi.service"
+
+log "Enabling StoryBox services"
+systemctl enable --now storybox-player.service
+systemctl enable --now storybox-watcher.service
+systemctl enable --now storybox-wifi.service
+
+log "Installation completed"
+printf '\nHotspot SSID: StoryBox-Setup\n'
+printf 'Hotspot password: %s\n' "$hotspot_password"
+printf 'Portal address: http://192.168.4.1/\n'
+printf '\nServices:\n'
+systemctl --no-pager --full --lines=0 status \
+    storybox-player.service storybox-watcher.service storybox-wifi.service || true
+printf '\nCopy story audio files into /home/admin/stories/.\n'
+printf 'A reboot is recommended to apply the admin group membership and GPIO udev permissions.\n'
+ "$CONFIG_DIR/hostapd.conf" || grep -q '^wpa_passphrase=12345678
+    hotspot_password="$(python3 -c 'import secrets; print(secrets.token_hex(9))')"
+    if grep -q '^wpa_passphrase=' "$CONFIG_DIR/hostapd.conf"; then
+        sed -i "s/^wpa_passphrase=.*/wpa_passphrase=$hotspot_password/" "$CONFIG_DIR/hostapd.conf"
+    else
+        printf '\nwpa_passphrase=%s\n' "$hotspot_password" >> "$CONFIG_DIR/hostapd.conf"
+    fi
+else
+    hotspot_password="$(sed -n 's/^wpa_passphrase=//p' "$CONFIG_DIR/hostapd.conf" | head -n1)"
+fi
+if grep -q '^interface=' "$CONFIG_DIR/hostapd.conf"; then
+    sed -i 's/^interface=.*/interface=wlan1/' "$CONFIG_DIR/hostapd.conf"
+else
+    printf '\ninterface=wlan1\n' >> "$CONFIG_DIR/hostapd.conf"
+fi
+chown root:root "$CONFIG_DIR/hostapd.conf"
+chmod 600 "$CONFIG_DIR/hostapd.conf"
+
+if [[ ! -s "$CONFIG_DIR/dnsmasq.conf" ]]; then
+    install -o root -g root -m 644 \
+        "$REPO_DIR/config/examples/dnsmasq.conf.example" "$CONFIG_DIR/dnsmasq.conf"
+fi
+sed -i \
+    -e '/^interface=/d' \
+    -e '/^listen-address=/d' \
+    -e '/^dhcp-option=6,/d' \
+    -e '/^address=\/#\//d' \
+    "$CONFIG_DIR/dnsmasq.conf"
+grep -q '^bind-interfaces$' "$CONFIG_DIR/dnsmasq.conf" || printf 'bind-interfaces\n' >> "$CONFIG_DIR/dnsmasq.conf"
+grep -q '^dhcp-range=' "$CONFIG_DIR/dnsmasq.conf" || \
+    printf 'dhcp-range=192.168.4.10,192.168.4.100,255.255.255.0,12h\n' >> "$CONFIG_DIR/dnsmasq.conf"
+cat >> "$CONFIG_DIR/dnsmasq.conf" <<'EOF'
+interface=wlan1
+listen-address=192.168.4.1
+dhcp-option=6,192.168.4.1
+address=/#/192.168.4.1
+EOF
+chown root:root "$CONFIG_DIR/dnsmasq.conf"
+chmod 644 "$CONFIG_DIR/dnsmasq.conf"
+
+install -d -o root -g root -m 755 /etc/NetworkManager/conf.d
+cat > /etc/NetworkManager/conf.d/30-storybox-wlan1-unmanaged.conf <<'EOF'
+[keyfile]
+unmanaged-devices=interface-name:wlan1
+EOF
+nmcli device set wlan1 managed no >/dev/null 2>&1 || true
+
+# The distro hostapd/dnsmasq units must not compete with the Wi-Fi manager,
+# which starts and stops its own foreground processes during fallback.
+systemctl disable --now hostapd.service dnsmasq.service >/dev/null 2>&1 || true
+
+log "Installing systemd services"
+cat > "$TMP_DIR/storybox-player.service" <<'EOF'
+[Unit]
+Description=StoryBox Offline Audio Player
+After=multi-user.target sound.target
+Wants=sound.target
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+SupplementaryGroups=gpio audio
+WorkingDirectory=/home/admin
+ExecStart=/usr/bin/python3 -u /opt/storybox/src/storybox/player/story_player.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+KillMode=control-group
+Environment=HOME=/home/admin
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > "$TMP_DIR/storybox-watcher.service" <<'EOF'
+[Unit]
+Description=StoryBox Automatic Story and Prompt Generator
+After=local-fs.target
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+SupplementaryGroups=audio
+WorkingDirectory=/home/admin
+ExecStart=/usr/bin/python3 -u /opt/storybox/scripts/storybox_watcher.py
+Restart=always
+RestartSec=3
+Environment=HOME=/home/admin
+Environment=LD_LIBRARY_PATH=/opt/piper
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+install -o root -g root -m 644 "$TMP_DIR/storybox-player.service" "$UNIT_DIR/storybox-player.service"
+install -o root -g root -m 644 "$TMP_DIR/storybox-watcher.service" "$UNIT_DIR/storybox-watcher.service"
+install -o root -g root -m 644 "$REPO_DIR/systemd/storybox-wifi.service" "$UNIT_DIR/storybox-wifi.service"
+
+systemctl disable --now storybox-wpa.service >/dev/null 2>&1 || true
+rm -f "$UNIT_DIR/storybox-wpa.service"
+
+systemctl daemon-reload
+systemd-analyze verify \
+    "$UNIT_DIR/storybox-player.service" \
+    "$UNIT_DIR/storybox-watcher.service" \
+    "$UNIT_DIR/storybox-wifi.service"
+
+log "Enabling StoryBox services"
+systemctl enable --now storybox-player.service
+systemctl enable --now storybox-watcher.service
+systemctl enable --now storybox-wifi.service
+
+log "Installation completed"
+printf '\nHotspot SSID: StoryBox-Setup\n'
+printf 'Hotspot password: %s\n' "$hotspot_password"
+printf 'Portal address: http://192.168.4.1/\n'
+printf '\nServices:\n'
+systemctl --no-pager --full --lines=0 status \
+    storybox-player.service storybox-watcher.service storybox-wifi.service || true
+printf '\nCopy story audio files into /home/admin/stories/.\n'
+printf 'A reboot is recommended to apply the admin group membership and GPIO udev permissions.\n'
+ "$CONFIG_DIR/hostapd.conf"; then
     hotspot_password="$(python3 -c 'import secrets; print(secrets.token_hex(9))')"
     if grep -q '^wpa_passphrase=' "$CONFIG_DIR/hostapd.conf"; then
         sed -i "s/^wpa_passphrase=.*/wpa_passphrase=$hotspot_password/" "$CONFIG_DIR/hostapd.conf"
