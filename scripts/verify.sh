@@ -44,7 +44,7 @@ fi
 echo
 echo "=== GPIO event format ==="
 if grep -Fq -- '--format' src/storybox/player/story_player.py \
-   && grep -Fq 'falling\\s+gpiochip0' src/storybox/player/story_player.py; then
+   && grep -Fq 'falling\s+gpiochip0' src/storybox/player/story_player.py; then
     pass "GPIO event output matches player parser"
 else
     fail_check "GPIO event format/parser mismatch"
