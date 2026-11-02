@@ -70,6 +70,7 @@ def main():
         time.sleep(.1)
     else: sys.exit("MPV socket failed")
     gpio=subprocess.Popen(["gpiomon","-c","gpiochip0","-b","pull-up","-e","falling",
+        "--format","%E gpiochip0 %o",
         "6","1","0","3","7","8","9"],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
     pattern=re.compile(r"falling\s+gpiochip0\s+(\d+)")
     if WELCOME_PROMPT.exists(): play(WELCOME_PROMPT)

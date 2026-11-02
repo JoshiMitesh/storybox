@@ -1,118 +1,93 @@
 # StoryBox
 
-## Orange Pi dependencies
+Standalone offline audio story player for Orange Pi PC Plus.
 
-Install the tools used by the Wi-Fi hotspot, offline audio player, GPIO buttons, QR generator, and device-info API:
+## One-command device setup
+
+Requirements:
+- Armbian/Debian on Orange Pi PC Plus (ARMv7/armhf).
+- Linux account named `admin`.
+- Piper executable: `/opt/piper/piper`.
+- Piper voice model: `/opt/piper/models/en_US-lessac-medium.onnx`.
+- ALSA output available as `plughw:0,0`.
+- GPIO buttons wired as mapped in `src/storybox/player/story_player.py`.
+
+Piper and its voice model are external assets and are not bundled. Install an ARMv7-compatible Piper binary and the Lessac medium English model at the paths above before setup. The installer checks these prerequisites and stops if they are missing.
+
+### Install
 
 ```bash
 sudo apt update
-sudo apt install -y git python3 network-manager iw wireless-tools wpasupplicant hostapd dnsmasq mpv gpiod qrencode iproute2 curl alsa-utils
+sudo apt install -y git
+git clone https://github.com/JoshiMitesh/storybox.git
+cd storybox
+git checkout main
+sudo bash scripts/setup-device.sh
+sudo reboot
 ```
 
-Check installed commands:
+The script automatically installs Python, MPV, gpiod, ffmpeg and ALSA utilities; checks gpiomon support; installs the player, watcher, and systemd units; creates runtime directories; adds admin to gpio/audio groups; installs the GPIO udev rule; and enables both services. It does not modify Wi-Fi configuration. Reboot is required for group membership and device permissions.
+
+### Verify
 
 ```bash
-command -v git python3 nmcli iw wpa_supplicant hostapd dnsmasq mpv gpiomon qrencode ip curl aplay
-gpiomon --version
+systemctl status storybox-player.service storybox-watcher.service --no-pager
+journalctl -u storybox-player.service -b --no-pager
+journalctl -u storybox-watcher.service -b --no-pager
+id admin
+ls -l /dev/gpiochip*
 ```
 
-On the current Armbian/Debian Orange Pi image, install `gpiod` (not `libgpiod-tools`). Python modules used by the current device scripts are from the standard library; no `pip install` is required. The player expects `gpiomon` with `-c`, `-b` and `-e` options, so confirm your installed version supports those options.
+## Automatic story management
 
-## Wi-Fi setup
+Copy supported files into `/home/admin/stories/`:
 
-- `wlan0`: saved home Wi-Fi, managed by NetworkManager.
-- `wlan1`: StoryBox-Setup hotspot.
-- Hotspot password: `12345678`.
-- Portal: `http://192.168.4.1/`.
+- `.mp3`
+- `.wav`
+- `.m4a`
+- `.ogg`
+- `.flac`
 
-### Install / update
+The watcher waits for copying to finish, derives a clean title from the filename, generates a WAV prompt with local Piper, and synchronizes `/home/admin/story-library.json`.
+
+| Filename | Spoken prompt |
+|---|---|
+| `The-Golden-Key.mp3` | The Golden Key |
+| `clever_rabbit.mp3` | Clever Rabbit |
+| `My__Little--Star.mp3` | My Little Star |
+
+Extensions and filename separators are not spoken. Deleting a story removes its catalog entry and deletes its generated prompt only when no remaining story uses that prompt. `welcome.wav` is preserved.
+
+## Services
 
 ```bash
-cd ~/storybox
-git pull --ff-only origin fix/wlan0-client-wlan1-fallback-hotspot
-bash -n scripts/install.sh
-bash -n scripts/verify.sh
-bash scripts/verify.sh
-sudo bash scripts/install.sh
+sudo systemctl restart storybox-player.service
+sudo systemctl restart storybox-watcher.service
+sudo systemctl stop storybox-player.service
+sudo systemctl start storybox-player.service
+sudo journalctl -fu storybox-watcher.service
 ```
 
-### Start hotspot manager
+## Device paths
 
-```bash
-sudo systemctl enable --now storybox-wifi.service
-systemctl --no-pager --full status storybox-wifi.service
-journalctl -u storybox-wifi.service -n 80 --no-pager
-```
-
-### Connect phone to StoryBox
-
-1. Connect phone to `StoryBox-Setup` with password `12345678`.
-2. Open `http://192.168.4.1/` manually if the portal does not open automatically.
-3. Select home Wi-Fi and enter its password.
-
-### Diagnose portal / hotspot
-
-Run on the StoryBox device:
-
-```bash
-nmcli -f DEVICE,STATE,CONNECTION device status
-ip -4 addr show wlan1
-sudo grep -E '^(interface|listen-address|dhcp-range|dhcp-option|address)=' /etc/storybox/dnsmasq.conf
-sudo grep -E '^(interface|ssid|wpa_passphrase)=' /etc/storybox/hostapd.conf
-systemctl --no-pager --full status storybox-wifi.service
-sudo journalctl -u storybox-wifi.service -n 100 --no-pager
-pgrep -a 'hostapd|dnsmasq|portal.py' || true
-curl -i --max-time 3 http://192.168.4.1/
-```
-
-### Other device commands
-
-```bash
-ip -br addr
-nmcli connection show --active
-bash -n scripts/install.sh
-bash -n scripts/verify.sh
-bash scripts/verify.sh
-```
-
-## Offline player paths
-
+- Player: `/opt/storybox/src/storybox/player/story_player.py`
+- Watcher: `/opt/storybox/scripts/storybox_watcher.py`
 - Stories: `/home/admin/stories/`
-- Catalog: `/home/admin/story-library.json`
 - Prompts: `/home/admin/story-prompts/`
+- Catalog: `/home/admin/story-library.json`
+- Piper: `/opt/piper/piper`
+- Voice model: `/opt/piper/models/en_US-lessac-medium.onnx`
 - MPV IPC socket: `/tmp/lunii-player.sock`
 
-Manual player run:
+## Wi-Fi
+
+The Wi-Fi manager is separate. Current device configuration uses wlan0 for home Wi-Fi, wlan1 for the setup hotspot, and the local portal at `http://192.168.4.1/`. The one-command player setup deliberately does not change Wi-Fi settings or services.
+
+## Development checks
 
 ```bash
-sudo -u admin /usr/bin/python3 /opt/storybox/src/storybox/player/story_player.py
+bash -n scripts/setup-device.sh
+python3 -m py_compile scripts/storybox_watcher.py src/storybox/player/story_player.py
 ```
 
-## QR device-info test
-
-The QR opens the local device-info page (not backend pairing). Connect StoryBox and your phone to the same home Wi-Fi.
-
-Terminal 1 — start the device-info server:
-
-```bash
-cd ~/storybox
-PYTHONPATH=src python3 -u -m storybox.device_info
-```
-
-Terminal 2 — test the API and generate a QR using the current `wlan0` IP:
-
-```bash
-cd ~/storybox
-curl http://127.0.0.1:8088/api/device-info
-PYTHONPATH=src python3 -m storybox.pairing
-```
-
-QR file: `/home/admin/.local/share/storybox/pairing-draft.png`
-
-Optional: copy the QR image to your laptop (replace `<DEVICE_IP>` with the QR URL's IP):
-
-```bash
-scp admin@<DEVICE_IP>:/home/admin/.local/share/storybox/pairing-draft.png .
-```
-
-Open the PNG on your laptop and scan it with your phone. Keep Terminal 1 running while testing.
+Do not commit story audio, generated prompts, catalog data, Piper model files, Wi-Fi credentials, or device-specific secrets.
