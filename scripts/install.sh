@@ -186,6 +186,7 @@ dhcp-range=192.168.4.10,192.168.4.100,255.255.255.0,12h
 EOF
 chown root:root "$CONFIG_DIR/dnsmasq.conf"
 chmod 644 "$CONFIG_DIR/dnsmasq.conf"
+dnsmasq --test --conf-file="$CONFIG_DIR/dnsmasq.conf"     || die "Generated dnsmasq captive-portal configuration is invalid."
 
 install -d -o root -g root -m 755 /etc/NetworkManager/conf.d
 cat > /etc/NetworkManager/conf.d/30-storybox-wlan1-unmanaged.conf <<'EOF'
