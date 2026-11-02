@@ -95,6 +95,7 @@ if [[ ! -s "$MODEL_JSON" ]]; then
         || die "Piper voice configuration is invalid JSON."
     install -o root -g root -m 644 "$TMP_DIR/$MODEL_NAME.onnx.json" "$MODEL_JSON"
 fi
+python3 -m json.tool "$MODEL_JSON" >/dev/null || die "Installed Piper voice configuration is invalid JSON."
 
 [[ -d "$PIPER_DIR/espeak-ng-data" ]] || die "Piper archive is missing espeak-ng-data."
 export LD_LIBRARY_PATH="$PIPER_DIR"
