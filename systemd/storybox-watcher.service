@@ -1,0 +1,20 @@
+[Unit]
+Description=StoryBox Automatic Story and Prompt Generator
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+SupplementaryGroups=audio
+WorkingDirectory=/home/admin
+ExecStart=/usr/bin/python3 -u /opt/storybox/scripts/storybox_watcher.py
+Restart=always
+RestartSec=3
+Environment=HOME=/home/admin
+Environment=LD_LIBRARY_PATH=/opt/piper
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
