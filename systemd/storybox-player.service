@@ -1,6 +1,6 @@
 [Unit]
 Description=StoryBox Offline Audio Player
-After=multi-user.target sound.target
+After=local-fs.target sound.target
 Wants=sound.target
 
 [Service]

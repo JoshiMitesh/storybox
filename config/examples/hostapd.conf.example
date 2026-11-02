@@ -10,5 +10,4 @@ auth_algs=1
 wpa=2
 wpa_key_mgmt=WPA-PSK
 rsn_pairwise=CCMP
-# Fixed setup hotspot password (requested for this device).
-wpa_passphrase=12345678
+# The installer generates a unique WPA2 password on first setup.

@@ -1,7 +1,6 @@
 [Unit]
 Description=StoryBox Automatic Story and Prompt Generator
-After=multi-user.target
-Wants=multi-user.target
+After=local-fs.target
 
 [Service]
 Type=simple
