@@ -103,29 +103,25 @@ def scan_wifi():
         raise APIError("wifi_scan_failed", result.stderr.strip() or "Wi-Fi scan failed", 503)
 
     found = {}
-    current = None
-    for raw in result.stdout.splitlines():
-        line = raw.strip()
-        if line.startswith("BSS "):
-            current = {"ssid": "", "signal": None, "secured": False}
-        elif current is not None and line.startswith("SSID:"):
-            current["ssid"] = line.partition(":")[2].strip()
-        elif current is not None and line.startswith("signal:"):
-            match = re.search(r"(-?\d+(?:\.\d+)?)", line)
-            if match:
-                current["signal"] = float(match.group(1))
-        elif current is not None and (line.startswith("RSN:") or line.startswith("WPA:")):
-            current["secured"] = True
-        elif current is not None and line.startswith("freq:"):
-            if current["ssid"]:
-                previous = found.get(current["ssid"])
-                if previous is None or (current["signal"] or -999) > (previous["signal"] or -999):
-                    found[current["ssid"]] = current
-            current = None
+    blocks = re.split(r"(?m)^BSS\\s+", result.stdout)
+    for block in blocks[1:]:
+        ssid_match = re.search(r"(?m)^\\s*SSID:\\s*(.*)$", block)
+        if not ssid_match:
+            continue
+        ssid = ssid_match.group(1).strip()
+        if not ssid:
+            continue
+        signal_match = re.search(r"(?m)^\\s*signal:\\s*(-?\\d+(?:\\.\\d+)?)", block)
+        signal = float(signal_match.group(1)) if signal_match else None
+        secured = bool(re.search(r"(?m)^\\s*(?:RSN|WPA):", block))
+        network = {"ssid": ssid, "signal": signal, "secured": secured}
+        previous = found.get(ssid)
+        if previous is None or (signal if signal is not None else -999) > (
+            previous["signal"] if previous["signal"] is not None else -999
+        ):
+            found[ssid] = network
 
-    networks = sorted(found.values(), key=lambda item: item["ssid"].lower())
-    return {"networks": networks}
-
+    return {"networks": sorted(found.values(), key=lambda item: item["ssid"].lower())}
 
 def connect_wifi(payload):
     ssid = payload.get("ssid")
