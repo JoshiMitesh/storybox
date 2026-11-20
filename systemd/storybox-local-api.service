@@ -1,0 +1,24 @@
+[Unit]
+Description=StoryBox Local Device API
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+WorkingDirectory=/opt/storybox
+EnvironmentFile=-/etc/storybox/local-api.env
+Environment=PYTHONPATH=/opt/storybox/src
+ExecStart=/usr/bin/python3 -m storybox.local_api
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/admin/.local/share/storybox /home/admin/storybox-library
+
+[Install]
+WantedBy=multi-user.target
