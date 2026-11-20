@@ -42,7 +42,7 @@ def delete_profile(name):
         run(NMCLI, "connection", "delete", name)
 
 
-def connect(ssid, password):
+def connect(ssid, password, dry_run=False):
     if not isinstance(ssid, str) or not 1 <= len(ssid.encode("utf-8")) <= 32:
         raise ValueError("Invalid Wi-Fi network name")
     if not isinstance(password, str) or not 8 <= len(password) <= 63:
@@ -66,7 +66,7 @@ def connect(ssid, password):
         "wifi-sec.psk-flags", "0",
         "ipv4.method", "auto",
         "ipv6.method", "auto",
-        "connection.autoconnect", "yes",
+        "connection.autoconnect", "no" if dry_run else "yes",
         timeout=20,
     )
     if added.returncode != 0:
@@ -76,6 +76,17 @@ def connect(ssid, password):
     if security.returncode != 0 or security.stdout.strip() != "wpa-psk":
         delete_profile(candidate)
         raise RuntimeError("Could not configure WPA-PSK security for this Wi-Fi profile")
+
+    if dry_run:
+        deleted = run(NMCLI, "connection", "delete", candidate)
+        if deleted.returncode != 0:
+            raise RuntimeError("Dry-run profile was created but could not be removed")
+        return {
+            "success": True,
+            "dry_run": True,
+            "message": "Wi-Fi profile creation and WPA-PSK validation passed; no connection was activated",
+            "ssid": ssid,
+        }
 
     result = run(NMCLI, "--wait", "35", "connection", "up", candidate, "ifname", INTERFACE, timeout=40)
     if result.returncode != 0:
@@ -101,17 +112,36 @@ def connect(ssid, password):
         delete_profile(candidate)
         raise RuntimeError("Wi-Fi connected but no IPv4 address was assigned")
 
-    # The new profile is working. Now remove the previous StoryBox profile and
-    # duplicate profiles for this same SSID only; keep all other saved networks.
-    for name in profile_names():
-        if name == candidate:
-            continue
-        if name == PROFILE or profile_ssid(name) == ssid:
-            delete_profile(name)
+    # Keep the old profile until the new profile has its final name.
+    candidate_result = run(NMCLI, "-g", "UUID", "connection", "show", candidate)
+    candidate_uuid = candidate_result.stdout.strip().splitlines()[0] if candidate_result.returncode == 0 and candidate_result.stdout.strip() else None
+    if not candidate_uuid:
+        raise RuntimeError("Connected successfully, but could not identify the new Wi-Fi profile")
 
-    renamed = run(NMCLI, "connection", "modify", candidate, "connection.id", PROFILE)
+    old_result = run(NMCLI, "-g", "UUID", "connection", "show", PROFILE)
+    old_uuid = old_result.stdout.strip().splitlines()[0] if old_result.returncode == 0 and old_result.stdout.strip() else None
+    backup = "StoryBox-Backup-" + uuid.uuid4().hex[:8]
+
+    if old_uuid:
+        backed_up = run(NMCLI, "connection", "modify", "uuid", old_uuid, "connection.id", backup)
+        if backed_up.returncode != 0:
+            raise RuntimeError("New Wi-Fi connected, but the existing profile could not be backed up; both profiles were kept")
+
+    renamed = run(NMCLI, "connection", "modify", "uuid", candidate_uuid, "connection.id", PROFILE)
     if renamed.returncode != 0:
-        raise RuntimeError("Connected successfully, but could not name the saved StoryBox profile")
+        if old_uuid:
+            run(NMCLI, "connection", "modify", "uuid", old_uuid, "connection.id", PROFILE)
+        raise RuntimeError("New Wi-Fi connected, but profile naming failed; the previous profile was restored")
+
+    # Remove the old profile only after the new profile has its final name.
+    if old_uuid:
+        run(NMCLI, "connection", "delete", "uuid", old_uuid)
+
+    for name in profile_names():
+        if name == PROFILE:
+            continue
+        if profile_ssid(name) == ssid:
+            delete_profile(name)
 
     return {
         "success": True,
@@ -123,7 +153,7 @@ def connect(ssid, password):
 
 def main():
     data = json.load(sys.stdin)
-    result = connect(data.get("ssid", ""), data.get("password", ""))
+    result = connect(data.get("ssid", ""), data.get("password", ""), data.get("dry_run", False))
     print(json.dumps(result))
 
 

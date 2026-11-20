@@ -126,15 +126,18 @@ def scan_wifi():
 def connect_wifi(payload):
     ssid = payload.get("ssid")
     password = payload.get("password")
+    dry_run = payload.get("dry_run", False)
     if not isinstance(ssid, str) or not ssid.strip():
         raise APIError("invalid_request", "ssid is required")
     if not isinstance(password, str):
         raise APIError("invalid_request", "password must be a string")
+    if not isinstance(dry_run, bool):
+        raise APIError("invalid_request", "dry_run must be a boolean")
     script = Path(__file__).resolve().parent / "wifi" / "connect_wifi.py"
     try:
         result = subprocess.run(
             ["/usr/bin/python3", str(script)],
-            input=json.dumps({"ssid": ssid, "password": password}),
+            input=json.dumps({"ssid": ssid, "password": password, "dry_run": dry_run}),
             capture_output=True,
             text=True,
             timeout=50,
@@ -148,7 +151,7 @@ def connect_wifi(payload):
         response = {"success": False, "message": result.stderr.strip() or "Wi-Fi connection failed"}
     if result.returncode or not response.get("success"):
         raise APIError("wifi_connect_failed", response.get("message", "Wi-Fi connection failed"), 422)
-    return {"connected": True, **response}
+    return {"connected": not dry_run, **response}
 
 
 def validate_wifi_networks(networks):
