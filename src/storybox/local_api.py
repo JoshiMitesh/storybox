@@ -495,7 +495,10 @@ class StoryBoxAPIHandler(BaseHTTPRequestHandler):
 
     def handle_request(self):
         try:
-            status, payload = self.dispatch()
+            response = self.dispatch()
+            if response is None:
+                return
+            status, payload = response
             self.send_json(status, payload)
         except APIError as exc:
             self.send_json(exc.status, {"error": exc.code, "message": str(exc)})
