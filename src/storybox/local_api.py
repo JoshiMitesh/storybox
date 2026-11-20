@@ -103,17 +103,17 @@ def scan_wifi():
         raise APIError("wifi_scan_failed", result.stderr.strip() or "Wi-Fi scan failed", 503)
 
     found = {}
-    blocks = re.split(r"(?m)^BSS\\s+", result.stdout)
+    blocks = re.split(r"(?m)^BSS\s+", result.stdout)
     for block in blocks[1:]:
-        ssid_match = re.search(r"(?m)^\\s*SSID:\\s*(.*)$", block)
+        ssid_match = re.search(r"(?m)^\s*SSID:\s*(.*)$", block)
         if not ssid_match:
             continue
         ssid = ssid_match.group(1).strip()
         if not ssid:
             continue
-        signal_match = re.search(r"(?m)^\\s*signal:\\s*(-?\\d+(?:\\.\\d+)?)", block)
+        signal_match = re.search(r"(?m)^\s*signal:\s*(-?\d+(?:\.\d+)?)", block)
         signal = float(signal_match.group(1)) if signal_match else None
-        secured = bool(re.search(r"(?m)^\\s*(?:RSN|WPA):", block))
+        secured = bool(re.search(r"(?m)^\s*(?:RSN|WPA):", block))
         network = {"ssid": ssid, "signal": signal, "secured": secured}
         previous = found.get(ssid)
         if previous is None or (signal if signal is not None else -999) > (
