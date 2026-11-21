@@ -11,10 +11,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
-import hmac
-import secrets
-import hmac
-import secrets
 import json
 import os
 import re
@@ -153,9 +149,14 @@ def password_hash(password, salt):
 
 
 def register_account(payload):
+    global API_TOKEN
+
     password = payload.get("password")
+    confirmation = payload.get("password_confirmation")
     if not isinstance(password, str) or len(password) < 10:
         raise APIError("invalid_password", "Password must contain at least 10 characters")
+    if confirmation is not None and confirmation != password:
+        raise APIError("password_mismatch", "Password confirmation does not match")
 
     with STATE_LOCK:
         if AUTH_FILE.exists():
@@ -163,13 +164,22 @@ def register_account(payload):
 
         salt = secrets.token_bytes(16)
         atomic_json(AUTH_FILE, {
+            "username": "admin",
             "password_salt": salt.hex(),
             "password_hash": password_hash(password, salt),
             "token_hash": "",
             "token_expires_at": 0,
         })
         PROVISIONING_TOKEN_FILE.unlink(missing_ok=True)
-    return {"registered": True, "message": "StoryBox account registered successfully"}
+        API_TOKEN = ""
+
+    login = login_account({"password": password})
+    return {
+        "registered": True,
+        "username": "admin",
+        "message": "StoryBox account registered and signed in successfully",
+        **login,
+    }
 
 
 def login_account(payload):
@@ -213,6 +223,7 @@ def login_account(payload):
 
     return {
         "authenticated": True,
+        "username": account.get("username", "admin"),
         "access_token": token,
         "token_type": "Bearer",
         "expires_in": AUTH_TOKEN_TTL,
@@ -1255,8 +1266,7 @@ class StoryBoxAPIHandler(BaseHTTPRequestHandler):
         if method == "POST" and path == "/auth/register":
             if AUTH_FILE.exists():
                 raise APIError("already_registered", "StoryBox account is already registered", 409)
-            if not API_TOKEN or self.headers.get("Authorization", "") != f"Bearer {API_TOKEN}":
-                raise APIError("unauthorized", "Initial setup bearer token is required", 401)
+            ensure_setup_token()
             return 201, register_account(self.read_body())
 
         if not self.authorized():
