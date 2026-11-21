@@ -1337,7 +1337,11 @@ class StoryBoxAPIHandler(BaseHTTPRequestHandler):
         except APIError as exc:
             self.send_json(exc.status, {"error": exc.code, "message": str(exc)})
         except Exception as exc:
-            self.send_json(500, {"error": "internal_error", "message": str(exc)})
+            print(f"[storybox-api] Unhandled request error: {exc!r}", flush=True)
+            self.send_json(500, {
+                "error": "internal_error",
+                "message": "An unexpected server error occurred",
+            })
 
     def log_message(self, fmt, *args):
         print("[storybox-api] " + (fmt % args), flush=True)
