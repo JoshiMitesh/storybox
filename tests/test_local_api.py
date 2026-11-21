@@ -2,6 +2,8 @@ import json
 import tempfile
 import unittest
 import uuid
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +15,28 @@ from storybox.local_api import (
     validate_settings,
     validate_wifi_networks,
 )
+
+
+class HandlerErrorTests(unittest.TestCase):
+    def test_unexpected_error_does_not_leak_internal_details(self):
+        handler = object.__new__(local_api.StoryBoxAPIHandler)
+        output = StringIO()
+        with (
+            patch.object(
+                local_api.StoryBoxAPIHandler,
+                "dispatch",
+                side_effect=RuntimeError("sensitive internal detail"),
+            ),
+            patch.object(local_api.StoryBoxAPIHandler, "send_json") as send_json,
+            redirect_stdout(output),
+        ):
+            handler.handle_request()
+
+        send_json.assert_called_once_with(500, {
+            "error": "internal_error",
+            "message": "An unexpected server error occurred",
+        })
+        self.assertIn("sensitive internal detail", output.getvalue())
 
 
 class LocalAPITests(unittest.TestCase):
