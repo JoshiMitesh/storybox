@@ -9,17 +9,15 @@ import storybox.local_api as api
 
 
 
-class ProvisioningTokenTests(unittest.TestCase):
+class RegistrationWindowTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.data_dir = Path(self.temp.name)
-        self.token_file = self.data_dir / "provisioning-token.txt"
-        self.auth_file = self.data_dir / "auth.json"
+        self.root = Path(self.temp.name)
+        self.window_file = self.root / "registration-window.json"
+        self.auth_file = self.root / "auth.json"
         self.patches = [
-            patch.object(api, "DATA_DIR", self.data_dir),
-            patch.object(api, "PROVISIONING_TOKEN_FILE", self.token_file),
+            patch.object(api, "REGISTRATION_WINDOW_FILE", self.window_file),
             patch.object(api, "AUTH_FILE", self.auth_file),
-            patch.object(api, "API_TOKEN", ""),
         ]
         for item in self.patches:
             item.start()
@@ -29,49 +27,50 @@ class ProvisioningTokenTests(unittest.TestCase):
             item.stop()
         self.temp.cleanup()
 
-    def test_first_start_generates_secure_token_file(self):
-        token = api.ensure_setup_token()
+    def test_first_start_creates_ten_minute_window(self):
+        self.assertTrue(api.initialize_registration_window(now=1000))
+        state = json.loads(self.window_file.read_text())
+        self.assertEqual(state["opened_at"], 1000)
+        self.assertEqual(state["expires_at"], 1000 + 600)
+        self.assertEqual(self.window_file.stat().st_mode & 0o777, 0o600)
 
-        self.assertGreaterEqual(len(token), 32)
-        self.assertEqual(self.token_file.read_text().strip(), token)
-        self.assertEqual(self.token_file.stat().st_mode & 0o777, 0o600)
+    def test_restart_does_not_extend_registration_window(self):
+        api.initialize_registration_window(now=1000)
+        self.assertTrue(api.initialize_registration_window(now=1100))
+        state = json.loads(self.window_file.read_text())
+        self.assertEqual(state["expires_at"], 1600)
 
-    def test_token_is_stable_across_restarts(self):
-        first = api.ensure_setup_token()
-        with patch.object(api, "API_TOKEN", ""):
-            second = api.ensure_setup_token()
+    def test_expired_window_stays_closed_after_restart(self):
+        api.initialize_registration_window(now=1000)
+        self.assertFalse(api.initialize_registration_window(now=1600))
+        self.assertFalse(api.registration_window_open(now=1600))
 
-        self.assertEqual(first, second)
-
-    def test_registration_consumes_provisioning_token(self):
-        api.ensure_setup_token()
-        self.assertTrue(self.token_file.exists())
-
+    def test_registration_consumes_window(self):
+        api.initialize_registration_window()
         api.register_account({"password": "Test-Password-2026!"})
-
-        self.assertFalse(self.token_file.exists())
         self.assertTrue(self.auth_file.exists())
+        self.assertFalse(self.window_file.exists())
 
-    def test_configured_environment_token_is_preserved(self):
-        with patch.object(api, "API_TOKEN", "configured-installer-token"):
-            token = api.ensure_setup_token()
+    def test_invalid_window_state_fails_closed(self):
+        self.window_file.write_text('{"expires_at":"later"}')
+        with self.assertRaises(api.APIError):
+            api.initialize_registration_window(now=1000)
 
-        self.assertEqual(token, "configured-installer-token")
-        self.assertFalse(self.token_file.exists())
 
 
 class AuthTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.auth_file = Path(self.temp.name) / "auth.json"
-        self.token_file = Path(self.temp.name) / "provisioning-token.txt"
+        self.window_file = Path(self.temp.name) / "registration-window.json"
         self.auth_patch = patch.object(api, "AUTH_FILE", self.auth_file)
-        self.token_patch = patch.object(api, "PROVISIONING_TOKEN_FILE", self.token_file)
+        self.window_patch = patch.object(api, "REGISTRATION_WINDOW_FILE", self.window_file)
         self.auth_patch.start()
-        self.token_patch.start()
+        self.window_patch.start()
+        api.initialize_registration_window()
 
     def tearDown(self):
-        self.token_patch.stop()
+        self.window_patch.stop()
         self.auth_patch.stop()
         self.temp.cleanup()
 
