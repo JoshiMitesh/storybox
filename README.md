@@ -117,7 +117,6 @@ export STORYBOX_HOME="$HOME/.storybox-api-test"
 export STORYBOX_LIBRARY_DIR="$HOME/.storybox-api-test/library"
 export STORYBOX_API_HOST=127.0.0.1
 export STORYBOX_API_PORT=8089
-unset STORYBOX_API_TOKEN
 
 python3 -m storybox.local_api
 ```
