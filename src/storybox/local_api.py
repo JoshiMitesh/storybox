@@ -215,26 +215,44 @@ def device_info():
 
 
 def scan_wifi():
-    result = run_command("/usr/sbin/iw", "dev", WIFI_INTERFACE, "scan", timeout=25)
+    result = run_command(
+        "/usr/bin/nmcli",
+        "--terse", "--escape", "yes",
+        "--fields", "SSID,SIGNAL,SECURITY",
+        "device", "wifi", "list",
+        "ifname", WIFI_INTERFACE,
+        timeout=25,
+    )
     if result.returncode:
         raise APIError("wifi_scan_failed", result.stderr.strip() or "Wi-Fi scan failed", 503)
 
     found = {}
-    blocks = re.split(r"(?m)^BSS\s+", result.stdout)
-    for block in blocks[1:]:
-        ssid_match = re.search(r"(?m)^\s*SSID:\s*(.*)$", block)
-        if not ssid_match:
+    for line in result.stdout.splitlines():
+        fields = re.split(r"(?<!\\):", line, maxsplit=2)
+        if len(fields) != 3:
             continue
-        ssid = ssid_match.group(1).strip()
+
+        def unescape(value):
+            return re.sub(r"\\(.)", r"\1", value)
+
+        ssid, signal_text, security = map(unescape, fields)
+        ssid = ssid.strip()
         if not ssid:
             continue
-        signal_match = re.search(r"(?m)^\s*signal:\s*(-?\d+(?:\.\d+)?)", block)
-        signal = float(signal_match.group(1)) if signal_match else None
-        secured = bool(re.search(r"(?m)^\s*(?:RSN|WPA):", block))
-        network = {"ssid": ssid, "signal": signal, "secured": secured}
+
+        try:
+            signal = float(signal_text) if signal_text else None
+        except ValueError:
+            signal = None
+
+        network = {
+            "ssid": ssid,
+            "signal": signal,
+            "secured": bool(security.strip()),
+        }
         previous = found.get(ssid)
-        if previous is None or (signal if signal is not None else -999) > (
-            previous["signal"] if previous["signal"] is not None else -999
+        if previous is None or (signal if signal is not None else -1) > (
+            previous["signal"] if previous["signal"] is not None else -1
         ):
             found[ssid] = network
 
