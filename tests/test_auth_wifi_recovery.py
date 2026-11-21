@@ -64,11 +64,15 @@ class AuthTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.auth_file = Path(self.temp.name) / "auth.json"
-        self.patch = patch.object(api, "AUTH_FILE", self.auth_file)
-        self.patch.start()
+        self.token_file = Path(self.temp.name) / "provisioning-token.txt"
+        self.auth_patch = patch.object(api, "AUTH_FILE", self.auth_file)
+        self.token_patch = patch.object(api, "PROVISIONING_TOKEN_FILE", self.token_file)
+        self.auth_patch.start()
+        self.token_patch.start()
 
     def tearDown(self):
-        self.patch.stop()
+        self.token_patch.stop()
+        self.auth_patch.stop()
         self.temp.cleanup()
 
     def test_register_and_login(self):
