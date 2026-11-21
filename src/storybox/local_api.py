@@ -481,6 +481,8 @@ def apply_setup(payload):
         for key in ("name", "avatar_id", "child_name", "paired_at", "status_report_interval_seconds")
         if key in payload
     }
+    if "name" not in setup and "device_name" in payload:
+        setup["name"] = payload["device_name"]
 
     if "name" in setup and (
         not isinstance(setup["name"], str) or not setup["name"].strip()
