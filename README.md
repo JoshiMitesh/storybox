@@ -117,17 +117,27 @@ export STORYBOX_HOME="$HOME/.storybox-api-test"
 export STORYBOX_LIBRARY_DIR="$HOME/.storybox-api-test/library"
 export STORYBOX_API_HOST=127.0.0.1
 export STORYBOX_API_PORT=8089
-export STORYBOX_API_TOKEN='replace-with-a-long-random-test-token'
+unset STORYBOX_API_TOKEN
 
 python3 -m storybox.local_api
 ```
 
-Keep the server running. In terminal 2, configure the same test token:
+On first startup, the API generates a cryptographically random, one-time installer token and stores it in:
+
+```text
+$STORYBOX_HOME/.local/share/storybox/provisioning-token.txt
+```
+
+The file is readable only by the account running the API (mode `0600`). In terminal 2, read the token as that same Linux account:
 
 ```bash
-TOKEN='replace-with-a-long-random-test-token'
+TOKEN="$(cat "$STORYBOX_HOME/.local/share/storybox/provisioning-token.txt")"
 API='http://127.0.0.1:8089'
 ```
+
+For the default device configuration, where `STORYBOX_HOME` is `/home/admin`, the installer can run `sudo -u admin cat /home/admin/.local/share/storybox/provisioning-token.txt`. Give this token to the first owner through a trusted setup channel. Enter it in **Initial setup token** on the StoryBox API console and register the account. Successful registration consumes and deletes the one-time token file. The owner then logs in with their password to generate a bearer access token. Do not publish, log, or commit the installer token.
+
+If `STORYBOX_API_TOKEN` is explicitly configured in the service environment, that configured value remains the installer token and no token file is generated.
 
 The example binds only to localhost. To test from another device, a developer must deliberately configure a trusted local-network bind address and a strong token; do not expose the API without authentication.
 
