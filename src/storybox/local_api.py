@@ -9,6 +9,12 @@ legacy /home/admin/stories catalog until the player migration is agreed.
 from __future__ import annotations
 
 import hashlib
+import hmac
+import secrets
+import hmac
+import secrets
+import hmac
+import secrets
 import json
 import os
 import re
@@ -22,7 +28,7 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from storybox.device_identity import get_device_identity, identity_path
 
@@ -31,6 +37,7 @@ DATA_DIR = HOME / ".local" / "share" / "storybox"
 SETUP_FILE = DATA_DIR / "setup.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 WIFI_FILE = DATA_DIR / "wifi-networks.json"
+WIFI_CONNECT_FILE = DATA_DIR / "wifi-connect-operation.json"
 SYNC_FILE = DATA_DIR / "sync-state.json"
 SYNC_JOURNAL_FILE = DATA_DIR / "sync-journal.json"
 LIBRARY_DIR = Path(os.environ.get("STORYBOX_LIBRARY_DIR", str(HOME / "storybox-library")))
@@ -39,6 +46,7 @@ MPV_SOCKET = Path(os.environ.get("STORYBOX_MPV_SOCKET", "/tmp/lunii-player.sock"
 HOST = os.environ.get("STORYBOX_API_HOST", "127.0.0.1")
 PORT = int(os.environ.get("STORYBOX_API_PORT", "8089"))
 API_TOKEN = os.environ.get("STORYBOX_API_TOKEN", "")
+AUTH_FILE = DATA_DIR / "auth.json"
 FIRMWARE_VERSION = os.environ.get("STORYBOX_FIRMWARE_VERSION", "0.1.0")
 MAX_BODY_BYTES = 1024 * 1024
 MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
@@ -88,6 +96,105 @@ def atomic_json(path: Path, value, mode: int = 0o600):
         except FileNotFoundError:
             pass
         raise
+
+
+
+AUTH_ITERATIONS = 310000
+AUTH_TOKEN_TTL = 30 * 24 * 60 * 60
+LOGIN_FAILURES = []
+LOGIN_LOCK_UNTIL = 0
+
+
+def password_hash(password, salt):
+    return hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        AUTH_ITERATIONS,
+    ).hex()
+
+
+def register_account(payload):
+    password = payload.get("password")
+    if not isinstance(password, str) or len(password) < 10:
+        raise APIError("invalid_password", "Password must contain at least 10 characters")
+
+    with STATE_LOCK:
+        if AUTH_FILE.exists():
+            raise APIError("already_registered", "StoryBox account is already registered", 409)
+
+        salt = secrets.token_bytes(16)
+        atomic_json(AUTH_FILE, {
+            "password_salt": salt.hex(),
+            "password_hash": password_hash(password, salt),
+            "token_hash": "",
+            "token_expires_at": 0,
+        })
+    return {"registered": True, "message": "StoryBox account registered successfully"}
+
+
+def login_account(payload):
+    global LOGIN_LOCK_UNTIL
+
+    password = payload.get("password")
+    if not isinstance(password, str) or not password:
+        raise APIError("invalid_request", "Password is required")
+
+    now = time.time()
+    with STATE_LOCK:
+        if now < LOGIN_LOCK_UNTIL:
+            raise APIError("login_rate_limited", "Too many failed attempts. Try again later.", 429)
+
+        account = read_json(AUTH_FILE, None)
+        if not isinstance(account, dict):
+            raise APIError("not_registered", "Register the StoryBox account first", 404)
+
+        try:
+            salt = bytes.fromhex(account["password_salt"])
+            expected = account["password_hash"]
+        except (KeyError, TypeError, ValueError):
+            raise APIError("auth_state_invalid", "Stored account data is invalid", 500)
+
+        supplied = password_hash(password, salt)
+        if not hmac.compare_digest(supplied, expected):
+            LOGIN_FAILURES.append(now)
+            LOGIN_FAILURES[:] = [t for t in LOGIN_FAILURES if now - t < 60]
+            if len(LOGIN_FAILURES) >= 5:
+                LOGIN_LOCK_UNTIL = now + 60
+                LOGIN_FAILURES.clear()
+            raise APIError("invalid_credentials", "Incorrect password", 401)
+
+        LOGIN_FAILURES.clear()
+        LOGIN_LOCK_UNTIL = 0
+        token = secrets.token_urlsafe(32)
+        expires_at = int(time.time()) + AUTH_TOKEN_TTL
+        account["token_hash"] = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        account["token_expires_at"] = expires_at
+        atomic_json(AUTH_FILE, account)
+
+    return {
+        "authenticated": True,
+        "access_token": token,
+        "token_type": "Bearer",
+        "expires_in": AUTH_TOKEN_TTL,
+        "expires_at": expires_at,
+    }
+
+
+def valid_login_token(token):
+    account = read_json(AUTH_FILE, None)
+    if not isinstance(account, dict):
+        return False
+
+    stored_hash = account.get("token_hash", "")
+    expires_at = account.get("token_expires_at", 0)
+    if not isinstance(stored_hash, str) or not stored_hash:
+        return False
+    if not isinstance(expires_at, int) or expires_at <= int(time.time()):
+        return False
+
+    supplied_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(supplied_hash, stored_hash)
 
 
 def run_command(*args: str, timeout: int = 10):
@@ -162,6 +269,134 @@ def connect_wifi(payload):
     if result.returncode or not response.get("success"):
         raise APIError("wifi_connect_failed", response.get("message", "Wi-Fi connection failed"), 422)
     return {"connected": not dry_run, **response}
+
+
+
+
+def recover_wifi_connect_operation(force=False):
+    with STATE_LOCK:
+        operation = read_json(WIFI_CONNECT_FILE, None)
+        if not isinstance(operation, dict) or operation.get("status") != "pending":
+            return False
+
+        try:
+            created_at = int(operation["created_at"])
+        except (KeyError, TypeError, ValueError):
+            created_at = 0
+
+        if not force and time.time() - created_at < 120:
+            return False
+
+        operation.update({
+            "status": "failed",
+            "error": "wifi_connect_interrupted",
+            "message": "Wi-Fi connection was interrupted before the result could be saved",
+            "completed_at": int(time.time()),
+        })
+        atomic_json(WIFI_CONNECT_FILE, operation)
+        return True
+
+
+def run_wifi_connect_operation(operation_id, payload):
+    try:
+        result = connect_wifi(payload)
+        operation = {
+            "operation_id": operation_id,
+            "status": "success",
+            "ssid": payload["ssid"],
+            "result": result,
+            "message": result.get("message", "Wi-Fi operation completed"),
+            "completed_at": int(time.time()),
+        }
+    except Exception as exc:
+        operation = {
+            "operation_id": operation_id,
+            "status": "failed",
+            "ssid": payload["ssid"],
+            "error": getattr(exc, "code", "wifi_connect_failed"),
+            "message": str(exc),
+            "completed_at": int(time.time()),
+        }
+
+    with STATE_LOCK:
+        atomic_json(WIFI_CONNECT_FILE, operation)
+
+
+def start_wifi_connect(payload):
+    ssid = payload.get("ssid")
+    password = payload.get("password")
+    dry_run = payload.get("dry_run", False)
+    operation_id = payload.get("operation_id")
+
+    if not isinstance(ssid, str) or not ssid.strip():
+        raise APIError("invalid_request", "ssid is required")
+    if not isinstance(password, str):
+        raise APIError("invalid_request", "password must be a string")
+    if not isinstance(dry_run, bool):
+        raise APIError("invalid_request", "dry_run must be a boolean")
+
+    if operation_id is None:
+        operation_id = str(uuid.uuid4())
+    try:
+        operation_id = str(uuid.UUID(operation_id))
+    except (ValueError, TypeError, AttributeError):
+        raise APIError("invalid_request", "operation_id must be a valid UUID")
+
+    recover_wifi_connect_operation()
+
+    with STATE_LOCK:
+        previous = read_json(WIFI_CONNECT_FILE, {})
+        if isinstance(previous, dict) and previous.get("status") == "pending":
+            raise APIError(
+                "wifi_connect_in_progress",
+                "Another Wi-Fi connection operation is still running",
+                409,
+            )
+
+        atomic_json(WIFI_CONNECT_FILE, {
+            "operation_id": operation_id,
+            "status": "pending",
+            "ssid": ssid,
+            "message": "Wi-Fi connection is in progress",
+            "created_at": int(time.time()),
+        })
+
+    worker_payload = {
+        "ssid": ssid,
+        "password": password,
+        "dry_run": dry_run,
+    }
+    thread = threading.Thread(
+        target=run_wifi_connect_operation,
+        args=(operation_id, worker_payload),
+        daemon=True,
+    )
+    thread.start()
+
+    return {
+        "accepted": True,
+        "operation_id": operation_id,
+        "status": "pending",
+        "message": "Wi-Fi connection operation started",
+    }
+
+
+def get_wifi_connect_status(query):
+    operation_id = parse_qs(query).get("operation_id", [None])[0]
+    if not operation_id:
+        raise APIError("invalid_request", "operation_id is required")
+
+    try:
+        operation_id = str(uuid.UUID(operation_id))
+    except (ValueError, TypeError, AttributeError):
+        raise APIError("invalid_request", "operation_id must be a valid UUID")
+
+    recover_wifi_connect_operation()
+    operation = read_json(WIFI_CONNECT_FILE, None)
+    if not isinstance(operation, dict) or operation.get("operation_id") != operation_id:
+        raise APIError("operation_not_found", "Wi-Fi operation was not found", 404)
+
+    return operation
 
 
 def validate_wifi_networks(networks):
@@ -926,29 +1161,56 @@ class StoryBoxAPIHandler(BaseHTTPRequestHandler):
         return value
 
     def authorized(self):
-        # Keep the service safe by default. LAN binding is refused unless an
-        # explicit token has been configured.
-        if not API_TOKEN:
-            self.send_json(503, {"error": "api_not_configured", "message": "Set STORYBOX_API_TOKEN before enabling the local API"})
-            return False
         supplied = self.headers.get("Authorization", "")
+        if AUTH_FILE.exists():
+            if supplied.startswith("Bearer ") and valid_login_token(supplied[7:]):
+                return True
+            self.send_json(401, {
+                "error": "unauthorized",
+                "message": "Log in to obtain a valid bearer token",
+            })
+            return False
+
+        if not API_TOKEN:
+            self.send_json(503, {
+                "error": "api_not_configured",
+                "message": "Initial registration requires the existing setup token",
+            })
+            return False
+
         if supplied != f"Bearer {API_TOKEN}":
-            self.send_json(401, {"error": "unauthorized", "message": "A valid bearer token is required"})
+            self.send_json(401, {
+                "error": "unauthorized",
+                "message": "The initial setup bearer token is required",
+            })
             return False
         return True
 
     def dispatch(self):
-        if not self.authorized():
-            return
         path = urlparse(self.path).path
         method = self.command
+
+        if method == "POST" and path == "/auth/login":
+            return 200, login_account(self.read_body())
+
+        if method == "POST" and path == "/auth/register":
+            if AUTH_FILE.exists():
+                raise APIError("already_registered", "StoryBox account is already registered", 409)
+            if not API_TOKEN or self.headers.get("Authorization", "") != f"Bearer {API_TOKEN}":
+                raise APIError("unauthorized", "Initial setup bearer token is required", 401)
+            return 201, register_account(self.read_body())
+
+        if not self.authorized():
+            return
 
         if method == "GET" and path == "/device/info":
             return 200, device_info()
         if method == "GET" and path == "/device/wifi/scan":
             return 200, scan_wifi()
         if method == "POST" and path == "/device/wifi/connect":
-            return 200, connect_wifi(self.read_body())
+            return 202, start_wifi_connect(self.read_body())
+        if method == "GET" and path == "/device/wifi/connect/status":
+            return 200, get_wifi_connect_status(urlparse(self.path).query)
         if method == "PUT" and path == "/device/wifi/networks":
             networks = validate_wifi_networks(self.read_body().get("networks"))
             atomic_json(WIFI_FILE, networks)
@@ -969,6 +1231,26 @@ class StoryBoxAPIHandler(BaseHTTPRequestHandler):
         raise APIError("not_found", "Local API endpoint not found", 404)
 
     def do_GET(self):
+        if urlparse(self.path).path == "/console":
+            page = Path(__file__).parent / "web" / "api_console.html"
+            try:
+                body = page.read_bytes()
+            except OSError:
+                self.send_json(500, {
+                    "error": "console_unavailable",
+                    "message": "API console page is unavailable",
+                })
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         self.handle_request()
 
     def do_POST(self):
@@ -999,6 +1281,7 @@ def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     try:
         recover_sync_transaction()
+        recover_wifi_connect_operation(force=True)
     except Exception as exc:
         raise SystemExit(f"StoryBox sync recovery failed; API startup stopped: {exc}") from exc
 

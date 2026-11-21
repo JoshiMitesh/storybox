@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StoryBox API Console</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#10151e;color:#e8edf5;font:15px system-ui,sans-serif}
+header{padding:20px;background:#182231;border-bottom:1px solid #344256}
+h1{margin:0;font-size:22px}
+header p{color:#aab8ca;margin:5px 0}
+main{max-width:1100px;margin:24px auto;padding:0 16px;display:grid;grid-template-columns:260px 1fr;gap:18px}
+section{background:#182231;border:1px solid #344256;border-radius:12px;padding:18px;min-width:0}
+h2{font-size:17px;margin:0 0 14px}
+label{display:block;margin:14px 0 6px;color:#b9c6d7;font-size:13px}
+.account{background:#111b29;border:1px solid #344256;border-radius:9px;padding:14px;margin-bottom:18px}.account h2{margin-bottom:8px}.account button{margin-top:10px;width:100%}input,select,textarea{width:100%;padding:11px;border:1px solid #46566c;border-radius:7px;background:#0e1622;color:#f2f5fa;font:14px monospace}
+textarea{min-height:210px;resize:vertical;line-height:1.5}
+button{padding:10px 15px;border:0;border-radius:7px;background:#3478df;color:white;font-weight:650;cursor:pointer}
+button:disabled{opacity:.5}
+.endpoint{display:block;width:100%;margin:7px 0;text-align:left;background:#253449;font-size:13px}
+.endpoint.active{background:#3478df}
+.row{display:flex;gap:10px;margin-top:14px}
+.row button{flex:1}
+.muted{color:#9eacc0;font-size:12px}
+#response{white-space:pre-wrap;overflow-wrap:anywhere;background:#0b111a;padding:14px;border-radius:8px;min-height:120px;max-height:450px;overflow:auto;font:13px monospace}
+#resultMeta{margin:12px 0;color:#aab8ca}
+@media(max-width:720px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+<h1>StoryBox API Console</h1>
+<p>Local device API testing · Bearer-token authentication</p>
+</header>
+<main>
+<section>
+<h2>Endpoints</h2>
+<div id="endpointList"></div>
+</section>
+<section>
+<div class="account">
+<h2>StoryBox Account</h2>
+<label for="setupToken">Initial setup token (registration only)</label>
+<input id="setupToken" type="password" autocomplete="off" placeholder="Existing setup token">
+<label for="registerPassword">Create account password</label>
+<input id="registerPassword" type="password" autocomplete="new-password" placeholder="At least 10 characters">
+<button id="register">Register StoryBox</button>
+<label for="loginPassword">Account password</label>
+<input id="loginPassword" type="password" autocomplete="current-password" placeholder="Your account password">
+<button id="login">Login and generate access token</button>
+<p id="authMessage" class="muted">Register once, then log in to obtain an access token.</p>
+</div>
+
+<h2>Request</h2>
+<label for="token">Bearer token</label>
+<input id="token" type="text" autocomplete="off" placeholder="Paste API token">
+<p class="muted">Token stays in page memory; it is not saved.</p>
+
+<label for="method">HTTP method</label>
+<select id="method">
+<option>GET</option>
+<option>POST</option>
+<option>PUT</option>
+</select>
+
+<label for="path">Endpoint path</label>
+<input id="path" value="/device/info">
+
+<label for="body">JSON request body</label>
+<textarea id="body">{}</textarea>
+
+<div class="row">
+<button id="send">Send request</button>
+<button id="clear">Clear response</button>
+<button id="checkWifi">Check Wi-Fi result</button>
+</div>
+
+<div id="resultMeta">No request sent yet.</div>
+<h2>Response</h2>
+<pre id="response">Response will appear here.</pre>
+</section>
+</main>
+<script>
+"use strict";
+
+const endpoints = [
+ ["Device info","GET","/device/info",""],
+ ["Wi-Fi scan","GET","/device/wifi/scan",""],
+ ["Connect Wi-Fi","POST","/device/wifi/connect",'{"ssid":"","password":""}'],
+ ["Save Wi-Fi networks","PUT","/device/wifi/networks",'{"networks":[{"ssid":"","password":""}]}'],
+ ["Device setup","POST","/device/setup",'{"device_name":"","child_name":""}'],
+ ["Device settings","PUT","/device/settings",'{"max_volume":50}'],
+ ["Start story sync","POST","/device/sync",'{"version":1,"stories":[]}'],
+ ["Sync progress","GET","/device/sync/progress",""],
+ ["Device status","GET","/device/status",""],
+ ["Reset device data","POST","/device/reset","{}"]
+];
+
+const list = document.getElementById("endpointList");
+const method = document.getElementById("method");
+const path = document.getElementById("path");
+const body = document.getElementById("body");
+const response = document.getElementById("response");
+const meta = document.getElementById("resultMeta");
+const send = document.getElementById("send");
+
+function chooseEndpoint(index) {
+ const item = endpoints[index];
+ method.value = item[1];
+ path.value = item[2];
+ body.value = item[3];
+
+ document.querySelectorAll(".endpoint").forEach((button, i) => {
+  button.classList.toggle("active", i === index);
+ });
+}
+
+endpoints.forEach((item, index) => {
+ const button = document.createElement("button");
+ button.className = "endpoint";
+ button.textContent = item[1] + "  " + item[0];
+ button.addEventListener("click", () => chooseEndpoint(index));
+ list.appendChild(button);
+});
+
+chooseEndpoint(0);
+
+async function accountRequest(endpoint, password, setupToken) {
+ const message = document.getElementById("authMessage");
+ const tokenField = document.getElementById("token");
+
+ message.textContent = "Processing...";
+ try {
+  const headers = {"Content-Type": "application/json"};
+  if (setupToken) headers["Authorization"] = "Bearer " + setupToken;
+
+  const result = await fetch(endpoint, {
+   method: "POST",
+   headers,
+   body: JSON.stringify({password}),
+   cache: "no-store"
+  });
+
+  const data = await result.json();
+  if (!result.ok) {
+   throw new Error(data.message || data.error || "Request failed");
+  }
+
+  if (endpoint === "/auth/login") {
+   tokenField.value = data.access_token;
+   message.textContent = "Login successful. Access token generated. Expires: " +
+    new Date(data.expires_at * 1000).toLocaleString();
+   document.getElementById("loginPassword").value = "";
+  } else {
+   message.textContent = "Registration successful. Now log in with your password.";
+   document.getElementById("registerPassword").value = "";
+   document.getElementById("setupToken").value = "";
+  }
+
+  response.textContent = JSON.stringify(data, null, 2);
+ } catch (error) {
+  message.textContent = "Error: " + error.message;
+  response.textContent = String(error);
+ }
+}
+
+document.getElementById("register").addEventListener("click", async () => {
+ const setupToken = document.getElementById("setupToken").value.trim();
+ const password = document.getElementById("registerPassword").value;
+
+ if (!setupToken || !password) {
+  document.getElementById("authMessage").textContent =
+   "Enter the setup token and a new password.";
+  return;
+ }
+ if (password.length < 10) {
+  document.getElementById("authMessage").textContent =
+   "Password must contain at least 10 characters.";
+  return;
+ }
+ await accountRequest("/auth/register", password, setupToken);
+});
+
+document.getElementById("login").addEventListener("click", async () => {
+ const password = document.getElementById("loginPassword").value;
+ if (!password) {
+  document.getElementById("authMessage").textContent =
+   "Enter your account password.";
+  return;
+ }
+ await accountRequest("/auth/login", password, "");
+});
+
+document.getElementById("clear").addEventListener("click", () => {
+ response.textContent = "Response will appear here.";
+ meta.textContent = "Response cleared.";
+});
+
+
+document.getElementById("checkWifi").addEventListener("click", async () => {
+ const token = document.getElementById("token").value.trim();
+ const operationId = sessionStorage.getItem("storyboxWifiOperationId");
+
+ if (!token) {
+  meta.textContent = "Log in and obtain a bearer token first.";
+  return;
+ }
+ if (!operationId) {
+  meta.textContent = "No saved Wi-Fi operation ID.";
+  return;
+ }
+
+ meta.textContent = "Checking Wi-Fi operation...";
+ try {
+  const result = await fetch(
+   "/device/wifi/connect/status?operation_id=" +
+    encodeURIComponent(operationId),
+   {
+    headers: {"Authorization": "Bearer " + token},
+    cache: "no-store"
+   }
+  );
+  const data = await result.json();
+  response.textContent = JSON.stringify(data, null, 2);
+  meta.textContent = "HTTP " + result.status + " · Wi-Fi status: " +
+   (data.status || data.error || "unknown");
+ } catch (error) {
+  meta.textContent = "Could not retrieve Wi-Fi status. Reconnect and try again.";
+ }
+});
+
+send.addEventListener("click", async () => {
+ const token = document.getElementById("token").value.trim();
+ if (!token) {
+  meta.textContent = "Enter the bearer token first.";
+  return;
+ }
+
+ const verb = method.value;
+ const urlPath = path.value.trim();
+
+ if (!urlPath.startsWith("/device/") || urlPath.startsWith("//")) {
+  meta.textContent = "Only /device/ API paths are allowed.";
+  return;
+ }
+
+ if (
+  (urlPath === "/device/reset" ||
+   urlPath === "/device/wifi/connect") &&
+  !window.confirm("Run " + urlPath + "?")
+ ) return;
+
+ let payload;
+ if (verb !== "GET") {
+  try {
+   payload = JSON.parse(body.value);
+  } catch (error) {
+   meta.textContent = "Invalid JSON: " + error.message;
+   return;
+  }
+
+  if (!payload || Array.isArray(payload) || typeof payload !== "object") {
+   meta.textContent = "Request body must be a JSON object.";
+   return;
+  }
+ }
+
+ if (verb === "POST" && urlPath === "/device/wifi/connect") {
+  const operationId = crypto.randomUUID();
+  payload.operation_id = operationId;
+  sessionStorage.setItem("storyboxWifiOperationId", operationId);
+ }
+
+ send.disabled = true;
+ meta.textContent = "Sending request...";
+ const started = performance.now();
+
+ try {
+  const headers = {"Authorization": "Bearer " + token};
+  if (verb !== "GET") headers["Content-Type"] = "application/json";
+
+  const result = await fetch(urlPath, {
+   method: verb,
+   headers,
+   body: verb === "GET" ? undefined : JSON.stringify(payload),
+   cache: "no-store"
+  });
+
+  const raw = await result.text();
+  let formatted = raw;
+
+  try {
+   formatted = JSON.stringify(JSON.parse(raw), null, 2);
+  } catch (error) {}
+
+  response.textContent = formatted || "(empty response)";
+  meta.textContent = "HTTP " + result.status + " " +
+   result.statusText + " · " +
+   Math.round(performance.now() - started) + " ms";
+ } catch (error) {
+  response.textContent = String(error);
+  if (urlPath === "/device/wifi/connect" &&
+      sessionStorage.getItem("storyboxWifiOperationId")) {
+   meta.textContent =
+    "Connection interrupted. Reconnect to StoryBox, log in, then click Check Wi-Fi result.";
+  } else {
+   meta.textContent = "Request failed. Check the API server and network.";
+  }
+ } finally {
+  send.disabled = false;
+ }
+});
+</script>
+</body>
+</html>
