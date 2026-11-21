@@ -41,15 +41,16 @@ button:disabled{opacity:.5}
 <section>
 <div class="account">
 <h2>StoryBox Account</h2>
-<label for="setupToken">Initial setup token (registration only)</label>
-<input id="setupToken" type="password" autocomplete="off" placeholder="Existing setup token">
-<label for="registerPassword">Create account password</label>
+<p class="muted">Username: <strong>admin</strong></p>
+<label for="registerPassword">Create password</label>
 <input id="registerPassword" type="password" autocomplete="new-password" placeholder="At least 10 characters">
-<button id="register">Register StoryBox</button>
-<label for="loginPassword">Account password</label>
-<input id="loginPassword" type="password" autocomplete="current-password" placeholder="Your account password">
-<button id="login">Login and generate access token</button>
-<p id="authMessage" class="muted">Register once, then log in to obtain an access token.</p>
+<label for="confirmRegisterPassword">Confirm password</label>
+<input id="confirmRegisterPassword" type="password" autocomplete="new-password" placeholder="Re-enter your password">
+<button id="register">Create StoryBox account</button>
+<label for="loginPassword">Password</label>
+<input id="loginPassword" type="password" autocomplete="current-password" placeholder="Your admin password">
+<button id="login">Login</button>
+<p id="authMessage" class="muted">First-time setup: create an admin password. Later, log in with the same password.</p>
 </div>
 
 <h2>Request</h2>
@@ -126,19 +127,20 @@ endpoints.forEach((item, index) => {
 
 chooseEndpoint(0);
 
-async function accountRequest(endpoint, password, setupToken) {
+async function accountRequest(endpoint, password, passwordConfirmation) {
  const message = document.getElementById("authMessage");
  const tokenField = document.getElementById("token");
 
  message.textContent = "Processing...";
  try {
-  const headers = {"Content-Type": "application/json"};
-  if (setupToken) headers["Authorization"] = "Bearer " + setupToken;
-
   const result = await fetch(endpoint, {
    method: "POST",
-   headers,
-   body: JSON.stringify({password}),
+   headers: {"Content-Type": "application/json"},
+   body: JSON.stringify({
+    username: "admin",
+    password,
+    ...(passwordConfirmation ? {password_confirmation: passwordConfirmation} : {})
+   }),
    cache: "no-store"
   });
 
@@ -147,17 +149,18 @@ async function accountRequest(endpoint, password, setupToken) {
    throw new Error(data.message || data.error || "Request failed");
   }
 
-  if (endpoint === "/auth/login") {
-   tokenField.value = data.access_token;
-   message.textContent = "Login successful. Access token generated. Expires: " +
-    new Date(data.expires_at * 1000).toLocaleString();
-   document.getElementById("loginPassword").value = "";
-  } else {
-   message.textContent = "Registration successful. Now log in with your password.";
-   document.getElementById("registerPassword").value = "";
-   document.getElementById("setupToken").value = "";
-  }
+  tokenField.value = data.access_token;
+  const expires = data.expires_at
+   ? " Expires: " + new Date(data.expires_at * 1000).toLocaleString()
+   : "";
+  message.textContent = endpoint === "/auth/register"
+   ? "Account created. You are now logged in as admin."
+   : "Login successful as admin.";
+  message.textContent += expires;
 
+  document.getElementById("registerPassword").value = "";
+  document.getElementById("confirmRegisterPassword").value = "";
+  document.getElementById("loginPassword").value = "";
   response.textContent = JSON.stringify(data, null, 2);
  } catch (error) {
   message.textContent = "Error: " + error.message;
@@ -166,12 +169,12 @@ async function accountRequest(endpoint, password, setupToken) {
 }
 
 document.getElementById("register").addEventListener("click", async () => {
- const setupToken = document.getElementById("setupToken").value.trim();
  const password = document.getElementById("registerPassword").value;
+ const confirmation = document.getElementById("confirmRegisterPassword").value;
 
- if (!setupToken || !password) {
+ if (!password || !confirmation) {
   document.getElementById("authMessage").textContent =
-   "Enter the setup token and a new password.";
+   "Enter and confirm your password.";
   return;
  }
  if (password.length < 10) {
@@ -179,14 +182,19 @@ document.getElementById("register").addEventListener("click", async () => {
    "Password must contain at least 10 characters.";
   return;
  }
- await accountRequest("/auth/register", password, setupToken);
+ if (password !== confirmation) {
+  document.getElementById("authMessage").textContent =
+   "Passwords do not match.";
+  return;
+ }
+ await accountRequest("/auth/register", password, confirmation);
 });
 
 document.getElementById("login").addEventListener("click", async () => {
  const password = document.getElementById("loginPassword").value;
  if (!password) {
   document.getElementById("authMessage").textContent =
-   "Enter your account password.";
+   "Enter your admin password.";
   return;
  }
  await accountRequest("/auth/login", password, "");
