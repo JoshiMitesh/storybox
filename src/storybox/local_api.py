@@ -128,7 +128,7 @@ def ensure_setup_token():
             token = PROVISIONING_TOKEN_FILE.read_text(encoding="utf-8").strip()
         else:
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write(token + "\\n")
+                stream.write(token + "\n")
                 stream.flush()
                 os.fsync(stream.fileno())
 
