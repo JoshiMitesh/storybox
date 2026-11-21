@@ -56,6 +56,14 @@ class RegistrationWindowTests(unittest.TestCase):
         with self.assertRaises(api.APIError):
             api.initialize_registration_window(now=1000)
 
+    def test_registration_rejected_after_deadline(self):
+        api.initialize_registration_window(now=1000)
+        with patch.object(api.time, "time", return_value=1600):
+            with self.assertRaises(api.APIError) as raised:
+                api.register_account({"password": "Test-Password-2026!"})
+        self.assertEqual(raised.exception.code, "registration_closed")
+        self.assertFalse(self.auth_file.exists())
+
 
 
 class AuthTests(unittest.TestCase):
