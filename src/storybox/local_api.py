@@ -38,6 +38,7 @@ SETUP_FILE = DATA_DIR / "setup.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 WIFI_FILE = DATA_DIR / "wifi-networks.json"
 WIFI_CONNECT_FILE = DATA_DIR / "wifi-connect-operation.json"
+PROVISIONING_TOKEN_FILE = DATA_DIR / "provisioning-token.txt"
 SYNC_FILE = DATA_DIR / "sync-state.json"
 SYNC_JOURNAL_FILE = DATA_DIR / "sync-journal.json"
 LIBRARY_DIR = Path(os.environ.get("STORYBOX_LIBRARY_DIR", str(HOME / "storybox-library")))
@@ -105,6 +106,43 @@ LOGIN_FAILURES = []
 LOGIN_LOCK_UNTIL = 0
 
 
+def ensure_setup_token():
+    """Load or create the one-time token used by the device installer."""
+    global API_TOKEN
+
+    if API_TOKEN:
+        return API_TOKEN
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        token = PROVISIONING_TOKEN_FILE.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        token = secrets.token_urlsafe(32)
+        try:
+            fd = os.open(
+                PROVISIONING_TOKEN_FILE,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+        except FileExistsError:
+            token = PROVISIONING_TOKEN_FILE.read_text(encoding="utf-8").strip()
+        else:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(token + "\\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+
+    if len(token) < 32:
+        raise APIError(
+            "provisioning_token_invalid",
+            "The stored StoryBox provisioning token is invalid",
+            500,
+        )
+
+    API_TOKEN = token
+    return token
+
+
 def password_hash(password, salt):
     return hashlib.pbkdf2_hmac(
         "sha256",
@@ -130,6 +168,7 @@ def register_account(payload):
             "token_hash": "",
             "token_expires_at": 0,
         })
+        PROVISIONING_TOKEN_FILE.unlink(missing_ok=True)
     return {"registered": True, "message": "StoryBox account registered successfully"}
 
 
@@ -1294,9 +1333,10 @@ class StoryBoxAPIHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    if HOST not in ("127.0.0.1", "::1", "localhost") and not API_TOKEN:
-        raise SystemExit("Refusing LAN bind without STORYBOX_API_TOKEN")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_setup_token()
+    if HOST not in ("127.0.0.1", "::1", "localhost") and not API_TOKEN:
+        raise SystemExit("Refusing LAN bind without a StoryBox provisioning token")
     try:
         recover_sync_transaction()
         recover_wifi_connect_operation(force=True)
