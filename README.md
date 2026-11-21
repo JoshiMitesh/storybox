@@ -131,7 +131,7 @@ $STORYBOX_HOME/.local/share/storybox/provisioning-token.txt
 The file is readable only by the account running the API (mode `0600`). In terminal 2, read the token as that same Linux account:
 
 ```bash
-TOKEN="$(cat "$STORYBOX_HOME/.local/share/storybox/provisioning-token.txt")"
+TOKEN="$(cat "$HOME/.storybox-api-test/.local/share/storybox/provisioning-token.txt")"
 API='http://127.0.0.1:8089'
 ```
 
