@@ -40,10 +40,13 @@ credential is used by this service.
   metadata and downloads the listed files.
 - Battery percentage is reported as null when no battery hardware interface
   is defined.
-- The handover does not define a pairing-derived local API credential or
-  token exchange. The API therefore requires an explicitly configured bearer
-  token and refuses LAN binding when no token is configured. The token
-  provisioning mechanism must be agreed before enabling LAN access.
+- First-time account registration is available for ten minutes after
+  the first API startup. The deadline is persisted and is not extended by
+  service restarts. Successful registration closes the window permanently.
+- Keep the device on a trusted setup network during this initial window:
+  another client on that network could otherwise claim the unregistered account.
+- The account uses the fixed username `admin`; the parent chooses a password
+  of at least ten characters. Successful registration returns a bearer token.
 
 ## Runtime configuration
 
@@ -60,28 +63,34 @@ Environment variables:
 | STORYBOX_MPV_SOCKET | /tmp/lunii-player.sock | Existing MPV IPC socket |
 | STORYBOX_API_HOST | 127.0.0.1 | Bind address; loopback is safe for initial testing |
 | STORYBOX_API_PORT | 8089 | HTTP port |
-| STORYBOX_API_TOKEN | unset | Required bearer token |
+| STORYBOX_API_TOKEN | unset | Legacy setting; not used by first-time registration |
 | STORYBOX_FIRMWARE_VERSION | 0.1.0 | Reported firmware version |
 
 Run locally for development:
 
 ```bash
 cd /opt/storybox
-PYTHONPATH=/opt/storybox/src STORYBOX_API_TOKEN='replace-with-a-long-random-token' \
-  /usr/bin/python3 -m storybox.local_api
+PYTHONPATH=/opt/storybox/src /usr/bin/python3 -m storybox.local_api
 ```
 
-For phone access over Wi-Fi, configure a strong token and set
-`STORYBOX_API_HOST=0.0.0.0`. Do not expose the unauthenticated API on a
-network. HTTP is intended for a trusted local network during this development
-stage; production transport security and token provisioning remain open items.
+On the first API startup, the service persists a ten-minute registration
+deadline in `registration-window.json`. Restarting the API does not extend
+that deadline. During the window, open `/console` on a trusted setup network,
+choose the admin password, and submit registration. The API closes the window
+after successful registration; subsequent attempts are rejected. If the
+window expires before setup, registration remains closed and requires an
+explicit device re-provisioning procedure.
 
-Every request must include:
+After registration, every protected request must include the issued bearer
+token:
 
 ```http
-Authorization: Bearer <configured-token>
+Authorization: Bearer <access-token>
 Content-Type: application/json
 ```
+
+HTTP is intended for a trusted local network during this development stage;
+production transport security remains an open item.
 
 ## Request examples
 
