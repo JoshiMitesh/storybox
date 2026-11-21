@@ -122,17 +122,15 @@ unset STORYBOX_API_TOKEN
 python3 -m storybox.local_api
 ```
 
-On first startup, the API creates a cryptographically random, one-time provisioning token internally. The token is stored with mode `0600` under:
+On the first API startup, a ten-minute registration window is created and persisted under:
 
 ```text
-$STORYBOX_HOME/.local/share/storybox/provisioning-token.txt
+$STORYBOX_HOME/.local/share/storybox/registration-window.json
 ```
 
-The browser console does not display or request this token. On a trusted first-time setup network, open `/console`, create a password, confirm it, and submit. The backend uses its internally stored provisioning state, creates the fixed `admin` account, consumes the one-time token, and signs the new account in. The console receives the generated bearer access token automatically. Later, sign in using the fixed username `admin` and the password created during registration.
+The deadline is not extended by restarting the API. During that window, open `/console` on a trusted first-time setup network, create a password, confirm it, and submit. The API creates the fixed `admin` account and signs it in. The console receives the generated bearer access token automatically. Later, sign in using the fixed username `admin` and the password created during registration.
 
-Registration is one-time and available only until the first account is created. Keep first-time setup on a trusted local network: whoever reaches the unregistered device first could claim the initial account. Do not expose an unregistered device to an untrusted network.
-
-If `STORYBOX_API_TOKEN` is explicitly configured in the service environment, that configured value remains the internal provisioning token.
+Successful registration permanently closes the first-time window. If the ten-minute window expires before registration, the device remains unregistered and requires an explicit re-provisioning procedure. Keep the device on a trusted setup network during the window because another client on that network could otherwise claim the initial account.
 
 The example binds only to localhost. To test from another device, deliberately configure a trusted local-network bind address. Once the account is registered, protected device endpoints require the generated bearer access token.
 
