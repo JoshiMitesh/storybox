@@ -77,15 +77,35 @@ class AuthTests(unittest.TestCase):
 
     def test_register_and_login(self):
         result = api.register_account({
-            "password": "Test-Password-2026!"
+            "username": "ignored-user",
+            "password": "Test-Password-2026!",
+            "password_confirmation": "Test-Password-2026!",
         })
         self.assertTrue(self.auth_file.exists())
+        self.assertEqual(result["username"], "admin")
+        self.assertTrue(result["registered"])
+        self.assertTrue(result.get("access_token"))
+        self.assertTrue(api.valid_login_token(result["access_token"]))
+
+        saved = json.loads(self.auth_file.read_text())
+        self.assertEqual(saved["username"], "admin")
+        self.assertNotIn("password", saved)
 
         login = api.login_account({
             "password": "Test-Password-2026!"
         })
+        self.assertEqual(login["username"], "admin")
         self.assertTrue(login.get("access_token"))
         self.assertTrue(api.valid_login_token(login["access_token"]))
+
+    def test_registration_rejects_password_confirmation_mismatch(self):
+        with self.assertRaises(api.APIError) as raised:
+            api.register_account({
+                "password": "Test-Password-2026!",
+                "password_confirmation": "Different-Password-2026!",
+            })
+        self.assertEqual(raised.exception.code, "password_mismatch")
+        self.assertFalse(self.auth_file.exists())
 
     def test_duplicate_registration_rejected(self):
         api.register_account({"password": "Test-Password-2026!"})
