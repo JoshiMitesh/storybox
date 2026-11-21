@@ -122,26 +122,21 @@ unset STORYBOX_API_TOKEN
 python3 -m storybox.local_api
 ```
 
-On first startup, the API generates a cryptographically random, one-time installer token and stores it in:
+On first startup, the API creates a cryptographically random, one-time provisioning token internally. The token is stored with mode `0600` under:
 
 ```text
 $STORYBOX_HOME/.local/share/storybox/provisioning-token.txt
 ```
 
-The file is readable only by the account running the API (mode `0600`). In terminal 2, read the token as that same Linux account:
+The browser console does not display or request this token. On a trusted first-time setup network, open `/console`, create a password, confirm it, and submit. The backend uses its internally stored provisioning state, creates the fixed `admin` account, consumes the one-time token, and signs the new account in. The console receives the generated bearer access token automatically. Later, sign in using the fixed username `admin` and the password created during registration.
 
-```bash
-TOKEN="$(cat "$HOME/.storybox-api-test/.local/share/storybox/provisioning-token.txt")"
-API='http://127.0.0.1:8089'
-```
+Registration is one-time and available only until the first account is created. Keep first-time setup on a trusted local network: whoever reaches the unregistered device first could claim the initial account. Do not expose an unregistered device to an untrusted network.
 
-For the default device configuration, where `STORYBOX_HOME` is `/home/admin`, the installer can run `sudo -u admin cat /home/admin/.local/share/storybox/provisioning-token.txt`. Give this token to the first owner through a trusted setup channel. Enter it in **Initial setup token** on the StoryBox API console and register the account. Successful registration consumes and deletes the one-time token file. The owner then logs in with their password to generate a bearer access token. Do not publish, log, or commit the installer token.
+If `STORYBOX_API_TOKEN` is explicitly configured in the service environment, that configured value remains the internal provisioning token.
 
-If `STORYBOX_API_TOKEN` is explicitly configured in the service environment, that configured value remains the installer token and no token file is generated.
+The example binds only to localhost. To test from another device, deliberately configure a trusted local-network bind address. Once the account is registered, protected device endpoints require the generated bearer access token.
 
-The example binds only to localhost. To test from another device, a developer must deliberately configure a trusted local-network bind address and a strong token; do not expose the API without authentication.
-
-Every request requires the bearer token. JSON requests also use `Content-Type: application/json`.
+Every protected request requires the bearer token. JSON requests also use `Content-Type: application/json`.
 
 ### 4. Test the endpoints
 
