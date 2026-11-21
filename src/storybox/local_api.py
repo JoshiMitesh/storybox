@@ -34,7 +34,8 @@ SETUP_FILE = DATA_DIR / "setup.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 WIFI_FILE = DATA_DIR / "wifi-networks.json"
 WIFI_CONNECT_FILE = DATA_DIR / "wifi-connect-operation.json"
-PROVISIONING_TOKEN_FILE = DATA_DIR / "provisioning-token.txt"
+REGISTRATION_WINDOW_FILE = DATA_DIR / "registration-window.json"
+REGISTRATION_WINDOW_SECONDS = 10 * 60
 SYNC_FILE = DATA_DIR / "sync-state.json"
 SYNC_JOURNAL_FILE = DATA_DIR / "sync-journal.json"
 LIBRARY_DIR = Path(os.environ.get("STORYBOX_LIBRARY_DIR", str(HOME / "storybox-library")))
@@ -42,7 +43,6 @@ WIFI_INTERFACE = os.environ.get("STORYBOX_WIFI_INTERFACE", "wlan0")
 MPV_SOCKET = Path(os.environ.get("STORYBOX_MPV_SOCKET", "/tmp/lunii-player.sock"))
 HOST = os.environ.get("STORYBOX_API_HOST", "127.0.0.1")
 PORT = int(os.environ.get("STORYBOX_API_PORT", "8089"))
-API_TOKEN = os.environ.get("STORYBOX_API_TOKEN", "")
 AUTH_FILE = DATA_DIR / "auth.json"
 FIRMWARE_VERSION = os.environ.get("STORYBOX_FIRMWARE_VERSION", "0.1.0")
 MAX_BODY_BYTES = 1024 * 1024
@@ -102,41 +102,43 @@ LOGIN_FAILURES = []
 LOGIN_LOCK_UNTIL = 0
 
 
-def ensure_setup_token():
-    """Load or create the one-time token used by the device installer."""
-    global API_TOKEN
+def initialize_registration_window(now=None):
+    """Persist the one-time 10-minute registration deadline.
 
-    if API_TOKEN:
-        return API_TOKEN
+    The deadline is created only on the first API startup and is not extended
+    by later restarts. A malformed existing marker fails closed.
+    """
+    with STATE_LOCK:
+        if AUTH_FILE.exists():
+            return False
+        if REGISTRATION_WINDOW_FILE.exists():
+            state = read_json(REGISTRATION_WINDOW_FILE, None)
+            if not isinstance(state, dict) or not isinstance(state.get("expires_at"), int):
+                raise APIError(
+                    "registration_state_invalid",
+                    "The StoryBox registration window state is invalid",
+                    500,
+                )
+            return state["expires_at"] > int(time.time() if now is None else now)
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        token = PROVISIONING_TOKEN_FILE.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        token = secrets.token_urlsafe(32)
-        try:
-            fd = os.open(
-                PROVISIONING_TOKEN_FILE,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                0o600,
-            )
-        except FileExistsError:
-            token = PROVISIONING_TOKEN_FILE.read_text(encoding="utf-8").strip()
-        else:
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write(token + "\n")
-                stream.flush()
-                os.fsync(stream.fileno())
+        opened_at = int(time.time() if now is None else now)
+        atomic_json(REGISTRATION_WINDOW_FILE, {
+            "opened_at": opened_at,
+            "expires_at": opened_at + REGISTRATION_WINDOW_SECONDS,
+        })
+        return True
 
-    if len(token) < 32:
-        raise APIError(
-            "provisioning_token_invalid",
-            "The stored StoryBox provisioning token is invalid",
-            500,
-        )
 
-    API_TOKEN = token
-    return token
+def registration_window_open(now=None):
+    if AUTH_FILE.exists():
+        return False
+    state = read_json(REGISTRATION_WINDOW_FILE, None)
+    if not isinstance(state, dict):
+        return False
+    expires_at = state.get("expires_at")
+    if isinstance(expires_at, bool) or not isinstance(expires_at, int):
+        return False
+    return int(time.time() if now is None else now) < expires_at
 
 
 def password_hash(password, salt):
@@ -149,8 +151,6 @@ def password_hash(password, salt):
 
 
 def register_account(payload):
-    global API_TOKEN
-
     password = payload.get("password")
     confirmation = payload.get("password_confirmation")
     if not isinstance(password, str) or len(password) < 10:
@@ -161,6 +161,12 @@ def register_account(payload):
     with STATE_LOCK:
         if AUTH_FILE.exists():
             raise APIError("already_registered", "StoryBox account is already registered", 409)
+        if not registration_window_open():
+            raise APIError(
+                "registration_closed",
+                "The first-time registration window has expired",
+                403,
+            )
 
         salt = secrets.token_bytes(16)
         atomic_json(AUTH_FILE, {
@@ -170,8 +176,7 @@ def register_account(payload):
             "token_hash": "",
             "token_expires_at": 0,
         })
-        PROVISIONING_TOKEN_FILE.unlink(missing_ok=True)
-        API_TOKEN = ""
+        REGISTRATION_WINDOW_FILE.unlink(missing_ok=True)
 
     login = login_account({"password": password})
     return {
@@ -1241,20 +1246,11 @@ class StoryBoxAPIHandler(BaseHTTPRequestHandler):
             })
             return False
 
-        if not API_TOKEN:
-            self.send_json(503, {
-                "error": "api_not_configured",
-                "message": "Initial registration requires the existing setup token",
-            })
-            return False
-
-        if supplied != f"Bearer {API_TOKEN}":
-            self.send_json(401, {
-                "error": "unauthorized",
-                "message": "The initial setup bearer token is required",
-            })
-            return False
-        return True
+        self.send_json(401, {
+            "error": "unauthorized",
+            "message": "Complete first-time registration to access this endpoint",
+        })
+        return False
 
     def dispatch(self):
         path = urlparse(self.path).path
@@ -1266,7 +1262,6 @@ class StoryBoxAPIHandler(BaseHTTPRequestHandler):
         if method == "POST" and path == "/auth/register":
             if AUTH_FILE.exists():
                 raise APIError("already_registered", "StoryBox account is already registered", 409)
-            ensure_setup_token()
             return 201, register_account(self.read_body())
 
         if not self.authorized():
@@ -1347,13 +1342,7 @@ class StoryBoxAPIHandler(BaseHTTPRequestHandler):
 def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     if not AUTH_FILE.exists():
-        ensure_setup_token()
-    if (
-        HOST not in ("127.0.0.1", "::1", "localhost")
-        and not AUTH_FILE.exists()
-        and not API_TOKEN
-    ):
-        raise SystemExit("Refusing LAN bind before StoryBox account setup")
+        initialize_registration_window()
     try:
         recover_sync_transaction()
         recover_wifi_connect_operation(force=True)
