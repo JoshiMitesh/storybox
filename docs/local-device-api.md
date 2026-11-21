@@ -63,7 +63,6 @@ Environment variables:
 | STORYBOX_MPV_SOCKET | /tmp/lunii-player.sock | Existing MPV IPC socket |
 | STORYBOX_API_HOST | 127.0.0.1 | Bind address; loopback is safe for initial testing |
 | STORYBOX_API_PORT | 8089 | HTTP port |
-| STORYBOX_API_TOKEN | unset | Legacy setting; not used by first-time registration |
 | STORYBOX_FIRMWARE_VERSION | 0.1.0 | Reported firmware version |
 
 Run locally for development:
