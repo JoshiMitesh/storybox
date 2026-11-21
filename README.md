@@ -1,20 +1,45 @@
 # StoryBox
 
-Standalone offline audio story player for Orange Pi PC Plus.
+Offline audio story player for the Orange Pi PC Plus. The device plays locally stored stories using physical buttons, MPV, and locally generated spoken prompts.
 
-## One-command device setup
+> **Branch note:** The stable device installer is on `main`. The local device API is under active development on `feature/local-device-api`. The API branch is not a production deployment guide.
 
-Requirements:
-- Armbian/Debian on Orange Pi PC Plus (ARMv7/armhf).
-- Linux account named `admin`.
-- Piper executable: `/opt/piper/piper`.
-- Piper voice model: `/opt/piper/models/en_US-lessac-medium.onnx`.
-- ALSA output available as `plughw:0,0`.
-- GPIO buttons wired as mapped in `src/storybox/player/story_player.py`.
+## Contents
 
-Piper and its voice model are external assets and are not bundled. Install an ARMv7-compatible Piper binary and the Lessac medium English model at the paths above before setup. The installer checks these prerequisites and stops if they are missing.
+- [Features](#features)
+- [Device requirements](#device-requirements)
+- [Install the player](#install-the-player)
+- [Manage stories](#manage-stories)
+- [Manage services](#manage-services)
+- [Develop and test the local API](#develop-and-test-the-local-api)
+- [Project layout](#project-layout)
+- [Safety and data](#safety-and-data)
 
-### Install
+## Features
+
+- Offline playback of stories stored on the device.
+- Physical-button control for playback, navigation, volume, and menu actions.
+- Local Piper text-to-speech prompts.
+- Automatic story catalog and prompt updates when audio files are added or removed.
+- Separate Wi-Fi management and setup portal.
+- A development-only local HTTP API on `feature/local-device-api`.
+
+## Device requirements
+
+The one-command installer targets:
+
+- Orange Pi PC Plus running Armbian/Debian (ARMv7/armhf).
+- Linux user account named `admin`.
+- Audio output available as ALSA `plughw:0,0`.
+- GPIO buttons connected according to the mapping in `src/storybox/player/story_player.py`.
+- ARMv7-compatible Piper executable at `/opt/piper/piper`.
+- Piper voice model at `/opt/piper/models/en_US-lessac-medium.onnx`.
+
+Piper and its voice model are external assets and are not included in this repository. Install both before running the device installer.
+
+## Install the player
+
+On a fresh supported device:
 
 ```bash
 sudo apt update
@@ -22,13 +47,22 @@ sudo apt install -y git
 git clone https://github.com/JoshiMitesh/storybox.git
 cd storybox
 git checkout main
+```
+
+Install the ARMv7 Piper binary and voice model at the paths above, then run:
+
+```bash
 sudo bash scripts/setup-device.sh
 sudo reboot
 ```
 
-The script automatically installs Python, MPV, gpiod, ffmpeg and ALSA utilities; checks gpiomon support; installs the player, watcher, and systemd units; creates runtime directories; adds admin to gpio/audio groups; installs the GPIO udev rule; and enables both services. It does not modify Wi-Fi configuration. Reboot is required for group membership and device permissions.
+The installer installs the player and watcher dependencies, copies the player files into `/opt/storybox`, installs the systemd units and GPIO udev rule, creates story directories, and enables the player and watcher services. It adds `admin` to the GPIO and audio groups; reboot so the new group membership takes effect.
 
-### Verify
+The installer does **not** configure Wi-Fi or install the development local API.
+
+### Verify the installation
+
+After reboot:
 
 ```bash
 systemctl status storybox-player.service storybox-watcher.service --no-pager
@@ -38,27 +72,35 @@ id admin
 ls -l /dev/gpiochip*
 ```
 
-## Automatic story management
+## Manage stories
 
-Copy supported files into `/home/admin/stories/`:
+Copy supported audio files into:
 
-- `.mp3`
-- `.wav`
-- `.m4a`
-- `.ogg`
-- `.flac`
+```text
+/home/admin/stories/
+```
 
-The watcher waits for copying to finish, derives a clean title from the filename, generates a WAV prompt with local Piper, and synchronizes `/home/admin/story-library.json`.
+Supported formats:
 
-| Filename | Spoken prompt |
+- MP3 (`.mp3`)
+- WAV (`.wav`)
+- M4A (`.m4a`)
+- Ogg (`.ogg`)
+- FLAC (`.flac`)
+
+The watcher waits for file copying to finish, derives a readable title from each filename, generates a local WAV prompt with Piper, and updates the story catalog.
+
+Examples:
+
+| Audio filename | Spoken title |
 |---|---|
 | `The-Golden-Key.mp3` | The Golden Key |
 | `clever_rabbit.mp3` | Clever Rabbit |
 | `My__Little--Star.mp3` | My Little Star |
 
-Extensions and filename separators are not spoken. Deleting a story removes its catalog entry and deletes its generated prompt only when no remaining story uses that prompt. `welcome.wav` is preserved.
+The catalog is stored at `/home/admin/story-library.json`; generated prompts are stored in `/home/admin/story-prompts/`. The welcome prompt is preserved when stories are removed.
 
-## Services
+## Manage services
 
 ```bash
 sudo systemctl restart storybox-player.service
@@ -68,206 +110,101 @@ sudo systemctl start storybox-player.service
 sudo journalctl -fu storybox-watcher.service
 ```
 
-## Device paths
+## Develop and test the local API
 
-- Player: `/opt/storybox/src/storybox/player/story_player.py`
-- Watcher: `/opt/storybox/scripts/storybox_watcher.py`
-- Stories: `/home/admin/stories/`
-- Prompts: `/home/admin/story-prompts/`
-- Catalog: `/home/admin/story-library.json`
-- Piper: `/opt/piper/piper`
-- Voice model: `/opt/piper/models/en_US-lessac-medium.onnx`
-- MPV IPC socket: `/tmp/lunii-player.sock`
+The API is currently available on the `feature/local-device-api` branch. It provides local device registration/authentication and device operations for future mobile-app integration. It does not call the cloud backend.
 
-## Wi-Fi
-
-The Wi-Fi manager is separate. Current device configuration uses wlan0 for home Wi-Fi, wlan1 for the setup hotspot, and the local portal at `http://192.168.4.1/`. The one-command player setup deliberately does not change Wi-Fi settings or services.
-
-## Local Device API — Development Testing
-
-The `feature/local-device-api` branch contains a first implementation of the ten local device API operations. These APIs are intended for the mobile app to communicate with the StoryBox on the local network. The StoryBox API does not call the backend directly.
-
-> **Development status:** The API paths and payloads are a first implementation based on the integration handover. The final backend OpenAPI contract is still pending. Do not treat this as a production deployment guide.
-
-### 1. Clone the API branch
+### Get the development branch
 
 ```bash
 git clone -b feature/local-device-api https://github.com/JoshiMitesh/storybox.git
 cd storybox
 ```
 
-### 2. Run automated tests
+### Set up the Python test environment
+
+Python 3.10 or newer is recommended.
 
 ```bash
-python3 -m py_compile src/storybox/local_api.py src/storybox/wifi/connect_wifi.py
-PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_local_api.py' -v
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements-dev.txt
 ```
 
-The current local API test module contains seven unit tests.
+### Run checks
 
-### 3. Start the API with isolated test data
-
-Run the following in terminal 1. The separate test directories prevent normal development tests from changing the device's real StoryBox data.
+Run the full test suite from the repository root:
 
 ```bash
-mkdir -p "$HOME/.storybox-api-test"
+PYTHONPATH=src python -m pytest -q
+```
 
+Compile the API and Wi-Fi modules:
+
+```bash
+python -m py_compile src/storybox/local_api.py src/storybox/wifi/connect_wifi.py
+```
+
+### Run the API with isolated test data
+
+Do not point a development API at the production StoryBox data. Start the API with a separate home directory and port:
+
+```bash
 export PYTHONPATH="$PWD/src"
 export STORYBOX_HOME="$HOME/.storybox-api-test"
 export STORYBOX_LIBRARY_DIR="$HOME/.storybox-api-test/library"
-export STORYBOX_API_HOST=127.0.0.1
-export STORYBOX_API_PORT=8089
+export STORYBOX_API_HOST=0.0.0.0
+export STORYBOX_API_PORT=8090
+unset STORYBOX_API_TOKEN
 
-python3 -m storybox.local_api
+python -m storybox.local_api
 ```
 
-On the first API startup, a ten-minute registration window is created and persisted under:
+From a browser on the same trusted local network, open:
 
 ```text
-$STORYBOX_HOME/.local/share/storybox/registration-window.json
+http://<ORANGE-PI-IP>:8090/console
 ```
 
-The deadline is not extended by restarting the API. During that window, open `/console` on a trusted first-time setup network, create a password, confirm it, and submit. The API creates the fixed `admin` account and signs it in. The console receives the generated bearer access token automatically. Later, sign in using the fixed username `admin` and the password created during registration.
+Replace `<ORANGE-PI-IP>` with the device's current LAN IP address. Binding to `0.0.0.0` exposes the development server on network interfaces; use it only on a trusted network and stop it when testing is complete.
 
-Successful registration permanently closes the first-time window. If the ten-minute window expires before registration, the device remains unregistered and requires an explicit re-provisioning procedure. Keep the device on a trusted setup network during the window because another client on that network could otherwise claim the initial account.
+On first startup, the API opens a persisted ten-minute first-registration window. Register the fixed `admin` account with a password and confirmation in the console. The window is not extended by restarting the API. Successful registration permanently closes it; later registration attempts are rejected. If the window expires before registration, use a fresh disposable test data directory for another registration test.
 
-The example binds only to localhost. To test from another device, deliberately configure a trusted local-network bind address. Once the account is registered, protected device endpoints require the generated bearer access token.
+The API console signs in after registration and stores the returned bearer token for protected API requests. See [Local Device API documentation](docs/local-device-api.md) for endpoints, request formats, runtime settings, and current integration limitations.
 
-Every protected request requires the bearer token. JSON requests also use `Content-Type: application/json`.
+> **Development status:** The local API is still under integration. Keep it separate from the production player installation. Do not enable an API systemd service or point it at production data as part of these tests. Sync/download behavior is not covered by the setup instructions here; do not run sync operations as part of routine smoke tests.
 
-### 4. Test the endpoints
+## Project layout
 
-**Device information — GET**
+```text
+src/storybox/
+  local_api.py             Local device API (development branch)
+  player/
+    story_player.py        Physical-button audio player
+  wifi/
+    connect_wifi.py        Wi-Fi connection helper
 
-```bash
-curl -i -H "Authorization: Bearer $TOKEN" "$API/device/info"
+scripts/
+  setup-device.sh          Orange Pi player installer
+  storybox_watcher.py      Story catalog and prompt watcher
+
+systemd/
+  storybox-player.service
+  storybox-watcher.service
+
+udev/
+  99-storybox-gpio.rules
+
+tests/                      Automated tests
+docs/
+  local-device-api.md       Local API details and integration notes
 ```
 
-**Wi-Fi scan — GET**
+## Safety and data
 
-```bash
-curl -i -H "Authorization: Bearer $TOKEN" "$API/device/wifi/scan"
-```
-
-Wi-Fi scanning requires a compatible wireless interface and sufficient privileges. The default interface is `wlan0`; laptop interfaces often have a different name. On Linux, the API process may need `CAP_NET_ADMIN` for the scan operation.
-
-**Wi-Fi connection — POST (dry run only)**
-
-```bash
-curl -i -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"ssid":"Test-WiFi","password":"temporary-test-password","dry_run":true}' \
-  "$API/device/wifi/connect"
-```
-
-Use `"dry_run": true` for safe testing. This checks that a temporary NetworkManager profile can be created and its WPA-PSK configuration validated, then removes that profile. It does **not** authenticate the password, connect to the network, or test DHCP. Do not test a real connection remotely unless you have physical access or a verified recovery method.
-
-**Save parent-provided Wi-Fi networks — PUT**
-
-```bash
-curl -i -X PUT \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"networks":[{"ssid":"Example-WiFi","password":"example-password"}]}' \
-  "$API/device/wifi/networks"
-```
-
-Use dummy credentials in a disposable test environment. Never commit real Wi-Fi passwords.
-
-**First-time setup — POST**
-
-```bash
-curl -i -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Test StoryBox","child_name":"Test Child","avatar_id":"avatar_01"}' \
-  "$API/device/setup"
-```
-
-**Device settings — PUT**
-
-```bash
-curl -i -X PUT \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"language":"en","max_volume":60}' \
-  "$API/device/settings"
-```
-
-**Device status — GET**
-
-```bash
-curl -i -H "Authorization: Bearer $TOKEN" "$API/device/status"
-```
-
-**Sync progress — GET**
-
-```bash
-curl -i -H "Authorization: Bearer $TOKEN" "$API/device/sync/progress"
-```
-
-**Start story sync — POST**
-
-The endpoint accepts a full snapshot. Each story needs an `id` and either a `files[]` list or the top-level file fields `filename`, `download_url`, `size_bytes`, and `sha256`. Downloads must use HTTPS. See [docs/local-device-api.md](docs/local-device-api.md) for the complete example payload and file schema.
-
-> **Do not run sync tests against real device data yet.** The current sync implementation still needs transaction and failure-handling hardening. Review the implementation and use a disposable test environment before invoking this endpoint.
-
-**Device reset — POST**
-
-```bash
-curl -i -X POST -H "Authorization: Bearer $TOKEN" "$API/device/reset"
-```
-
-> **Destructive operation:** Reset clears parent setup/settings data. Invoke it only in a disposable test environment after reviewing the implementation. It is not needed for ordinary API smoke tests.
-
-### 5. Check authentication and validation
-
-A request without a token should return `401 Unauthorized`:
-
-```bash
-curl -i "$API/device/info"
-```
-
-An invalid volume should return `400 Bad Request`:
-
-```bash
-curl -i -X PUT \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"language":"en","max_volume":150}' \
-  "$API/device/settings"
-```
-
-### API endpoint checklist
-
-| Method | Endpoint | Safe initial test |
-|---|---|---|
-| GET | `/device/info` | Yes |
-| GET | `/device/wifi/scan` | Yes; requires Wi-Fi permissions |
-| POST | `/device/wifi/connect` | Yes, with `dry_run: true` only |
-| PUT | `/device/wifi/networks` | Use dummy credentials and test data |
-| POST | `/device/setup` | Yes, in isolated test data |
-| PUT | `/device/settings` | Yes, in isolated test data |
-| POST | `/device/sync` | Wait for sync hardening; disposable test only |
-| GET | `/device/sync/progress` | Yes |
-| GET | `/device/status` | Yes |
-| POST | `/device/reset` | Disposable test only; destructive |
-
-For the full implementation notes, runtime environment variables, request examples, and known integration gaps, see [docs/local-device-api.md](docs/local-device-api.md).
-
-### Important test isolation rules
-
-- Do not point `STORYBOX_HOME` or `STORYBOX_LIBRARY_DIR` at production paths during development tests.
-- Do not modify `/opt/storybox`, `/home/admin/stories`, `/home/admin/story-library.json`, or `/home/admin/.local/share/storybox` when testing the API branch.
-- Do not enable the optional API systemd service on a production device as part of a local smoke test.
-- Do not commit Wi-Fi passwords, bearer tokens, pairing codes, audio files, generated prompts, device identity files, or device-specific data.
-
-## Development checks
-
-```bash
-bash -n scripts/setup-device.sh
-python3 -m py_compile scripts/storybox_watcher.py src/storybox/player/story_player.py
-```
-
-Do not commit story audio, generated prompts, catalog data, Piper model files, Wi-Fi credentials, or device-specific secrets.
+- Do not commit passwords, Wi-Fi credentials, bearer tokens, provisioning data, private keys, or device identity files.
+- Do not commit story audio, generated prompts, or device-specific story catalogs.
+- Keep API development data under a separate test directory; do not use `/home/admin` or `/opt/storybox` as test data locations.
+- Do not run destructive reset operations against a real device.
+- The API uses bearer-token authentication after registration. Use it only on a trusted local network during development; production transport security and the final mobile-app integration contract still need to be agreed.
