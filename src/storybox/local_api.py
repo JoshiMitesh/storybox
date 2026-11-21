@@ -1346,9 +1346,14 @@ class StoryBoxAPIHandler(BaseHTTPRequestHandler):
 
 def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    ensure_setup_token()
-    if HOST not in ("127.0.0.1", "::1", "localhost") and not API_TOKEN:
-        raise SystemExit("Refusing LAN bind without a StoryBox provisioning token")
+    if not AUTH_FILE.exists():
+        ensure_setup_token()
+    if (
+        HOST not in ("127.0.0.1", "::1", "localhost")
+        and not AUTH_FILE.exists()
+        and not API_TOKEN
+    ):
+        raise SystemExit("Refusing LAN bind before StoryBox account setup")
     try:
         recover_sync_transaction()
         recover_wifi_connect_operation(force=True)
