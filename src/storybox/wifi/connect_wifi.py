@@ -113,12 +113,12 @@ def connect(ssid, password, dry_run=False):
         raise RuntimeError("Wi-Fi connected but no IPv4 address was assigned")
 
     # Keep the old profile until the new profile has its final name.
-    candidate_result = run(NMCLI, "-g", "UUID", "connection", "show", candidate)
+    candidate_result = run(NMCLI, "-g", "connection.uuid", "connection", "show", candidate)
     candidate_uuid = candidate_result.stdout.strip().splitlines()[0] if candidate_result.returncode == 0 and candidate_result.stdout.strip() else None
     if not candidate_uuid:
         raise RuntimeError("Connected successfully, but could not identify the new Wi-Fi profile")
 
-    old_result = run(NMCLI, "-g", "UUID", "connection", "show", PROFILE)
+    old_result = run(NMCLI, "-g", "connection.uuid", "connection", "show", PROFILE)
     old_uuid = old_result.stdout.strip().splitlines()[0] if old_result.returncode == 0 and old_result.stdout.strip() else None
     backup = "StoryBox-Backup-" + uuid.uuid4().hex[:8]
 
