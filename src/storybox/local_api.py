@@ -19,6 +19,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -31,6 +32,7 @@ SETUP_FILE = DATA_DIR / "setup.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 WIFI_FILE = DATA_DIR / "wifi-networks.json"
 SYNC_FILE = DATA_DIR / "sync-state.json"
+SYNC_JOURNAL_FILE = DATA_DIR / "sync-journal.json"
 LIBRARY_DIR = Path(os.environ.get("STORYBOX_LIBRARY_DIR", str(HOME / "storybox-library")))
 WIFI_INTERFACE = os.environ.get("STORYBOX_WIFI_INTERFACE", "wlan0")
 MPV_SOCKET = Path(os.environ.get("STORYBOX_MPV_SOCKET", "/tmp/lunii-player.sock"))
@@ -72,6 +74,14 @@ def atomic_json(path: Path, value, mode: int = 0o600):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp_name, path)
+        directory_fd = os.open(
+            path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     except Exception:
         try:
             os.unlink(temp_name)
@@ -173,25 +183,61 @@ def validate_wifi_networks(networks):
 def apply_setup(payload):
     if not isinstance(payload, dict):
         raise APIError("invalid_request", "setup body must be a JSON object")
+
     setup = {
         key: payload[key]
         for key in ("name", "avatar_id", "child_name", "paired_at", "status_report_interval_seconds")
         if key in payload
     }
-    if "name" in setup and (not isinstance(setup["name"], str) or not setup["name"].strip()):
+
+    if "name" in setup and (
+        not isinstance(setup["name"], str) or not setup["name"].strip()
+    ):
         raise APIError("invalid_request", "name must be a non-empty string")
+
+    settings = None
+    networks = None
+    sync_version = None
+
     if "settings" in payload:
-        validate_settings(payload["settings"])
-        atomic_json(SETTINGS_FILE, payload["settings"])
+        settings = validate_settings(payload["settings"])
+
     if "wifi_networks" in payload:
-        atomic_json(WIFI_FILE, validate_wifi_networks(payload["wifi_networks"]))
+        networks = validate_wifi_networks(payload["wifi_networks"])
+
     if "sync_version" in payload:
-        if not isinstance(payload["sync_version"], int) or payload["sync_version"] < 0:
-            raise APIError("invalid_request", "sync_version must be a non-negative integer")
-        state = read_json(SYNC_FILE, {"sync_version": 0, "stories": []})
-        state["sync_version"] = payload["sync_version"]
-        atomic_json(SYNC_FILE, state)
-    atomic_json(SETUP_FILE, setup)
+        sync_version = payload["sync_version"]
+        if (
+            isinstance(sync_version, bool)
+            or not isinstance(sync_version, int)
+            or sync_version < 0
+        ):
+            raise APIError(
+                "invalid_request",
+                "sync_version must be a non-negative integer",
+            )
+
+    with STATE_LOCK:
+        if sync_version is not None and SYNC_THREAD and SYNC_THREAD.is_alive():
+            raise APIError(
+                "busy",
+                "Cannot change sync_version while a story sync is running",
+                409,
+            )
+
+        if settings is not None:
+            atomic_json(SETTINGS_FILE, settings)
+
+        if networks is not None:
+            atomic_json(WIFI_FILE, networks)
+
+        if sync_version is not None:
+            state = read_json(SYNC_FILE, {"sync_version": 0, "stories": []})
+            state["sync_version"] = sync_version
+            atomic_json(SYNC_FILE, state)
+
+        atomic_json(SETUP_FILE, setup)
+
     return {"ok": True}
 
 
@@ -199,7 +245,9 @@ def validate_settings(settings):
     if not isinstance(settings, dict):
         raise APIError("invalid_request", "settings must be a JSON object")
     if "max_volume" in settings and (
-        not isinstance(settings["max_volume"], int) or not 0 <= settings["max_volume"] <= 100
+        isinstance(settings["max_volume"], bool)
+        or not isinstance(settings["max_volume"], int)
+        or not 0 <= settings["max_volume"] <= 100
     ):
         raise APIError("invalid_request", "max_volume must be an integer from 0 to 100")
     if "continuous_playback" in settings and not isinstance(settings["continuous_playback"], bool):
@@ -223,23 +271,77 @@ def apply_settings(payload):
 def safe_relative_path(value: str) -> Path:
     if not isinstance(value, str) or not value or "\x00" in value:
         raise APIError("invalid_sync", "Each file requires a valid path")
+
     candidate = Path(value)
-    if candidate.is_absolute() or any(part in ("..", "") for part in candidate.parts):
+    if (
+        candidate.is_absolute()
+        or candidate == Path(".")
+        or any(part in ("..", "") for part in candidate.parts)
+        or candidate.as_posix() != value
+    ):
         raise APIError("invalid_sync", f"Unsafe file path: {value}")
+
     return candidate
 
 
-def download_file(url: str, destination: Path, expected_size, expected_sha):
+def validated_https_origin(url):
+    if not isinstance(url, str):
+        raise APIError("invalid_download_url", "Story downloads must use a valid HTTPS URL")
+
     parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.netloc:
-        raise APIError("invalid_download_url", "Story downloads must use HTTPS")
+    try:
+        port = parsed.port or 443
+    except ValueError as exc:
+        raise APIError("invalid_download_url", "Story download URL has an invalid port") from exc
+
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or not 1 <= port <= 65535
+    ):
+        raise APIError("invalid_download_url", "Story downloads must use a valid HTTPS URL")
+
+    return parsed.hostname.lower(), port
+
+
+class SameOriginHTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, original_origin):
+        super().__init__()
+        self.original_origin = original_origin
+
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        try:
+            redirected_origin = validated_https_origin(new_url)
+        except APIError as exc:
+            raise APIError(
+                "unsafe_redirect",
+                "Story download redirects must remain on the same HTTPS origin",
+            ) from exc
+
+        if redirected_origin != self.original_origin:
+            raise APIError(
+                "unsafe_redirect",
+                "Story download redirects must remain on the same HTTPS origin",
+            )
+
+        return super().redirect_request(
+            request, response, code, message, headers, new_url
+        )
+
+
+def download_file(url: str, destination: Path, expected_size, expected_sha):
+    original_origin = validated_https_origin(url)
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
     total = 0
     request = urllib.request.Request(url, headers={"User-Agent": "StoryBox/0.1"})
     fd, temp_name = tempfile.mkstemp(prefix=".download-", dir=destination.parent)
     try:
-        with os.fdopen(fd, "wb") as output, urllib.request.urlopen(request, timeout=30) as response:
+        opener = urllib.request.build_opener(SameOriginHTTPSRedirectHandler(original_origin))
+        with os.fdopen(fd, "wb") as output, opener.open(request, timeout=30) as response:
             while True:
                 chunk = response.read(64 * 1024)
                 if not chunk:
@@ -279,86 +381,450 @@ def normalize_story_files(story):
     return files
 
 
+def validate_sync_payload(payload):
+    if not isinstance(payload, dict):
+        raise APIError("invalid_sync", "Sync payload must be an object")
+
+    version = payload.get("sync_version")
+    stories = payload.get("stories")
+    deleted_ids = payload.get("deleted_story_ids", [])
+
+    if isinstance(version, bool) or not isinstance(version, int) or version < 0:
+        raise APIError("invalid_sync", "sync_version must be a non-negative integer")
+    if not isinstance(stories, list):
+        raise APIError("invalid_sync", "stories must be an array")
+    if not isinstance(deleted_ids, list):
+        raise APIError("invalid_sync", "deleted_story_ids must be an array")
+
+    story_ids = set()
+    for story in stories:
+        if not isinstance(story, dict):
+            raise APIError("invalid_sync", "Every story must be an object")
+
+        raw_id = story.get("id")
+        if isinstance(raw_id, bool) or not isinstance(raw_id, (int, str)):
+            raise APIError("invalid_sync", "Every story requires an integer or string id")
+
+        story_id = str(raw_id)
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", story_id):
+            raise APIError("invalid_sync", f"Invalid story id: {story_id}")
+        if story_id in story_ids:
+            raise APIError("invalid_sync", f"Duplicate story id: {story_id}")
+        story_ids.add(story_id)
+
+        paths = []
+        for file_info in normalize_story_files(story):
+            if not isinstance(file_info, dict):
+                raise APIError("invalid_sync", f"Story {story_id} has an invalid files entry")
+
+            relative = safe_relative_path(file_info.get("path") or file_info.get("filename"))
+            paths.append(relative)
+
+            url = file_info.get("download_url")
+            if not isinstance(url, str):
+                raise APIError("invalid_sync", f"Story {story_id} file has no download_url")
+            validated_https_origin(url)
+
+            size = file_info.get("size_bytes")
+            if size is not None and (
+                isinstance(size, bool) or not isinstance(size, int) or size < 0
+            ):
+                raise APIError("invalid_sync", "size_bytes must be a non-negative integer")
+
+            sha = file_info.get("sha256")
+            if sha is not None and (
+                not isinstance(sha, str) or not re.fullmatch(r"[A-Fa-f0-9]{64}", sha)
+            ):
+                raise APIError("invalid_sync", "sha256 must contain exactly 64 hexadecimal characters")
+
+        for index, first in enumerate(paths):
+            for second in paths[index + 1:]:
+                if first == second or first in second.parents or second in first.parents:
+                    raise APIError("invalid_sync", f"Conflicting file paths in story {story_id}")
+
+    deleted_set = set()
+    for item in deleted_ids:
+        if isinstance(item, bool) or not isinstance(item, (int, str)):
+            raise APIError("invalid_sync", "Every deleted story id must be an integer or string")
+        story_id = str(item)
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", story_id):
+            raise APIError("invalid_sync", f"Invalid deleted story id: {story_id}")
+        if story_id in deleted_set:
+            raise APIError("invalid_sync", f"Duplicate deleted story id: {story_id}")
+        if story_id in story_ids:
+            raise APIError("invalid_sync", f"Story {story_id} cannot be both present and deleted")
+        deleted_set.add(story_id)
+
+    return version, stories
+
+
+
+def sync_transaction_path(name, kind, transaction_id):
+    expected_name = f".{LIBRARY_DIR.name}.{kind}-{transaction_id}"
+    if not isinstance(name, str) or name != expected_name:
+        raise APIError(
+            "sync_recovery_failed",
+            "Invalid transaction path in sync journal",
+            500,
+        )
+
+    path = LIBRARY_DIR.parent / name
+    if path.is_symlink():
+        raise APIError(
+            "sync_recovery_failed",
+            "Transaction path must not be a symlink",
+            500,
+        )
+    return path
+
+
+def remove_transaction_path(path):
+    if path.is_symlink():
+        raise APIError(
+            "sync_recovery_failed",
+            "Refusing to remove a transaction symlink",
+            500,
+        )
+    if not path.exists():
+        return
+    if not path.is_dir():
+        raise APIError(
+            "sync_recovery_failed",
+            "Transaction path must be a directory",
+            500,
+        )
+    shutil.rmtree(path)
+
+
+def recover_sync_transaction():
+    if SYNC_JOURNAL_FILE.is_symlink():
+        raise APIError(
+            "sync_recovery_failed",
+            "Sync journal must not be a symlink",
+            500,
+        )
+    if not SYNC_JOURNAL_FILE.exists():
+        return False
+    if not SYNC_JOURNAL_FILE.is_file():
+        raise APIError(
+            "sync_recovery_failed",
+            "Sync journal path must be a regular file",
+            500,
+        )
+
+    journal = read_json(SYNC_JOURNAL_FILE, None)
+    if not isinstance(journal, dict):
+        raise APIError("sync_recovery_failed", "Sync journal is invalid", 500)
+
+    transaction_id = journal.get("transaction_id")
+    try:
+        uuid.UUID(transaction_id)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise APIError("sync_recovery_failed", "Sync journal transaction ID is invalid", 500) from exc
+
+    phase = journal.get("phase")
+    if phase not in ("prepared", "library_activated", "state_committed"):
+        raise APIError("sync_recovery_failed", "Sync journal phase is invalid", 500)
+
+    had_library = journal.get("had_library")
+    if not isinstance(had_library, bool):
+        raise APIError("sync_recovery_failed", "Sync journal library flag is invalid", 500)
+
+    stage_dir = sync_transaction_path(journal.get("stage_name"), "stage", transaction_id)
+    backup_name = journal.get("backup_name")
+    backup_dir = (
+        sync_transaction_path(backup_name, "backup", transaction_id)
+        if backup_name is not None else None
+    )
+
+    if had_library != (backup_dir is not None):
+        raise APIError("sync_recovery_failed", "Sync journal backup information is inconsistent", 500)
+
+    for transaction_path in (stage_dir, backup_dir):
+        if transaction_path is None:
+            continue
+        if transaction_path.is_symlink():
+            raise APIError(
+                "sync_recovery_failed",
+                "Transaction path must not be a symlink",
+                500,
+            )
+        if transaction_path.exists() and not transaction_path.is_dir():
+            raise APIError(
+                "sync_recovery_failed",
+                "Transaction path must be a directory",
+                500,
+            )
+
+    if LIBRARY_DIR.is_symlink():
+        raise APIError(
+            "sync_recovery_failed",
+            "Story library must not be a symlink",
+            500,
+        )
+    if LIBRARY_DIR.exists() and not LIBRARY_DIR.is_dir():
+        raise APIError(
+            "sync_recovery_failed",
+            "Story library path must be a directory",
+            500,
+        )
+
+    state = read_json(SYNC_FILE, {})
+    committed = (
+        isinstance(state, dict)
+        and state.get("transaction_id") == transaction_id
+    )
+
+    if committed:
+        # The new library and sync state were committed. Only cleanup remains.
+        remove_transaction_path(stage_dir)
+        if backup_dir is not None:
+            remove_transaction_path(backup_dir)
+    else:
+        # The state does not identify this transaction: restore the old snapshot.
+        if had_library:
+            if backup_dir.exists():
+                if LIBRARY_DIR.exists():
+                    remove_transaction_path(LIBRARY_DIR)
+                os.replace(backup_dir, LIBRARY_DIR)
+            elif phase != "prepared" or not LIBRARY_DIR.exists():
+                raise APIError(
+                    "sync_recovery_failed",
+                    "Old library backup is missing; refusing unsafe recovery",
+                    500,
+                )
+        elif LIBRARY_DIR.exists():
+            # There was no old library; this directory can only be the uncommitted snapshot.
+            remove_transaction_path(LIBRARY_DIR)
+
+        remove_transaction_path(stage_dir)
+
+    SYNC_JOURNAL_FILE.unlink()
+    directory_fd = os.open(
+        SYNC_JOURNAL_FILE.parent,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+    )
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+    return True
+
+
 def sync_worker(payload):
     global SYNC_PROGRESS
+
+    stage_dir = None
+    transaction_id = str(uuid.uuid4())
+    journal_created = False
+
     try:
-        stories = payload.get("stories")
-        version = payload.get("sync_version")
-        if not isinstance(version, int) or version < 0 or not isinstance(stories, list):
-            raise APIError("invalid_sync", "sync_version and stories[] are required")
-        deleted_ids = payload.get("deleted_story_ids", [])
-        if not isinstance(deleted_ids, list):
-            raise APIError("invalid_sync", "deleted_story_ids must be an array")
+        version, stories = validate_sync_payload(payload)
 
-        previous = read_json(SYNC_FILE, {"sync_version": 0, "stories": []})
-        previous_ids = {str(item["id"]) for item in previous.get("stories", []) if "id" in item}
-        current_ids = {str(item.get("id")) for item in stories if isinstance(item, dict) and "id" in item}
-        remove_ids = (previous_ids - current_ids) | {str(item) for item in deleted_ids}
-        for story_id in remove_ids:
-            if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", story_id):
-                continue
-            shutil.rmtree(LIBRARY_DIR / story_id, ignore_errors=True)
+        parent = LIBRARY_DIR.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-        results = []
+        if LIBRARY_DIR.is_symlink():
+            raise APIError("invalid_library", "Story library must not be a symlink", 500)
+        if LIBRARY_DIR.exists() and not LIBRARY_DIR.is_dir():
+            raise APIError("invalid_library", "Story library path is not a directory", 500)
+
+        stage_name = f".{LIBRARY_DIR.name}.stage-{transaction_id}"
+        backup_name = f".{LIBRARY_DIR.name}.backup-{transaction_id}"
+        stage_dir = parent / stage_name
+        backup_dir = parent / backup_name
+
+        if stage_dir.exists() or stage_dir.is_symlink():
+            raise APIError("sync_failed", "Transaction staging path already exists", 500)
+        if backup_dir.exists() or backup_dir.is_symlink():
+            raise APIError("sync_failed", "Transaction backup path already exists", 500)
+
+        stage_dir.mkdir(mode=0o700)
+
         for story in stories:
-            if not isinstance(story, dict) or not isinstance(story.get("id"), (int, str)):
-                raise APIError("invalid_sync", "Every story requires an integer or string id")
             story_id = str(story["id"])
-            if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", story_id):
-                raise APIError("invalid_sync", f"Invalid story id: {story_id}")
             item = {"id": story["id"], "status": "downloading", "error": None}
+
             with STATE_LOCK:
-                SYNC_PROGRESS["sync_status"] = "syncing"
-                SYNC_PROGRESS["stories"] = results + [item]
+                SYNC_PROGRESS = {
+                    "sync_status": "syncing",
+                    "sync_version": version,
+                    "stories": [
+                        dict(result)
+                        for result in SYNC_PROGRESS.get("stories", [])
+                    ] + [dict(item)],
+                }
+
             try:
+                story_dir = stage_dir / story_id
                 for file_info in normalize_story_files(story):
-                    if not isinstance(file_info, dict):
-                        raise APIError("invalid_sync", f"Story {story_id} has an invalid files entry")
-                    relative = safe_relative_path(file_info.get("path") or file_info.get("filename"))
-                    url = file_info.get("download_url")
-                    if not isinstance(url, str):
-                        raise APIError("invalid_sync", f"Story {story_id} file has no download_url")
-                    expected_size = file_info.get("size_bytes")
-                    if expected_size is not None and (not isinstance(expected_size, int) or expected_size < 0):
-                        raise APIError("invalid_sync", "size_bytes must be a non-negative integer")
-                    destination = LIBRARY_DIR / story_id / relative
-                    sha = file_info.get("sha256")
-                    if destination.is_file():
-                        current_size = destination.stat().st_size
-                        if expected_size is not None and current_size != expected_size:
-                            destination.unlink()
-                        elif sha:
-                            digest = hashlib.sha256(destination.read_bytes()).hexdigest()
-                            if digest.lower() != str(sha).lower():
-                                destination.unlink()
-                    if not destination.is_file():
-                        download_file(url, destination, expected_size, sha)
-                item["status"] = "installed"
+                    relative = safe_relative_path(
+                        file_info.get("path") or file_info.get("filename")
+                    )
+                    destination = story_dir / relative
+                    download_file(
+                        file_info["download_url"],
+                        destination,
+                        file_info.get("size_bytes"),
+                        file_info.get("sha256"),
+                    )
+                item["status"] = "downloaded"
             except Exception as exc:
                 item["status"] = "failed"
                 item["error"] = str(exc)
-            results.append(item)
-            with STATE_LOCK:
-                SYNC_PROGRESS["stories"] = list(results)
+                raise
+            finally:
+                with STATE_LOCK:
+                    current = SYNC_PROGRESS.get("stories", [])
+                    for index, result in enumerate(current):
+                        if result.get("id") == item["id"]:
+                            current[index] = dict(item)
+                            break
 
-        state = {"sync_version": version, "stories": stories, "updated_at": int(time.time())}
+        had_library = LIBRARY_DIR.exists()
+        journal = {
+            "transaction_id": transaction_id,
+            "phase": "prepared",
+            "had_library": had_library,
+            "stage_name": stage_name,
+            "backup_name": backup_name if had_library else None,
+        }
+
+        atomic_json(SYNC_JOURNAL_FILE, journal)
+        journal_created = True
+
+        if had_library:
+            os.replace(LIBRARY_DIR, backup_dir)
+            directory_fd = os.open(
+                parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            )
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+
+        os.replace(stage_dir, LIBRARY_DIR)
+        stage_dir = None
+
+        directory_fd = os.open(
+            parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+        journal["phase"] = "library_activated"
+        atomic_json(SYNC_JOURNAL_FILE, journal)
+
+        state = {
+            "sync_version": version,
+            "stories": stories,
+            "updated_at": int(time.time()),
+            "transaction_id": transaction_id,
+        }
         atomic_json(SYNC_FILE, state)
-        final_status = "failed" if any(item["status"] == "failed" for item in results) else "completed"
+
+        # The transaction ID in sync-state.json is the commit record.
+        # Cleanup can be retried safely during the next startup.
+        try:
+            journal["phase"] = "state_committed"
+            atomic_json(SYNC_JOURNAL_FILE, journal)
+            recover_sync_transaction()
+            journal_created = False
+        except Exception as cleanup_error:
+            print(
+                f"StoryBox sync committed; cleanup deferred: {cleanup_error}",
+                flush=True,
+            )
+
         with STATE_LOCK:
-            SYNC_PROGRESS = {"sync_status": final_status, "sync_version": version, "stories": results}
+            SYNC_PROGRESS = {
+                "sync_status": "completed",
+                "sync_version": version,
+                "stories": [
+                    dict(result)
+                    for result in SYNC_PROGRESS.get("stories", [])
+                ],
+            }
+
     except Exception as exc:
+        if SYNC_JOURNAL_FILE.is_symlink() or SYNC_JOURNAL_FILE.exists():
+            try:
+                recover_sync_transaction()
+                journal_created = False
+            except Exception as recovery_error:
+                print(
+                    f"StoryBox sync recovery failed: {recovery_error}",
+                    flush=True,
+                )
+
+        state_read_error = None
+        try:
+            state = read_json(SYNC_FILE, {})
+        except Exception as state_error:
+            state = {}
+            state_read_error = str(state_error)
+
+        committed = (
+            isinstance(state, dict)
+            and state.get("transaction_id") == transaction_id
+        )
+
+        error_message = None if committed else str(exc)
+        if state_read_error:
+            error_message = (
+                f"{error_message}; sync state could not be read: {state_read_error}"
+            )
+
         with STATE_LOCK:
-            SYNC_PROGRESS = {"sync_status": "failed", "stories": [], "error": str(exc)}
+            SYNC_PROGRESS = {
+                "sync_status": "completed" if committed else "failed",
+                "sync_version": state.get("sync_version") if committed else None,
+                "stories": [
+                    dict(result)
+                    for result in SYNC_PROGRESS.get("stories", [])
+                ],
+                "error": error_message,
+            }
+
+    finally:
+        if stage_dir is not None and stage_dir.exists():
+            try:
+                shutil.rmtree(stage_dir)
+            except OSError as cleanup_error:
+                print(
+                    f"StoryBox sync staging cleanup deferred: {cleanup_error}",
+                    flush=True,
+                )
 
 
 def start_sync(payload):
     global SYNC_THREAD, SYNC_PROGRESS
+
+    validate_sync_payload(payload)
+
     with STATE_LOCK:
         if SYNC_THREAD and SYNC_THREAD.is_alive():
             raise APIError("busy", "A story sync is already running", 409)
+
+        if SYNC_JOURNAL_FILE.is_symlink() or SYNC_JOURNAL_FILE.exists():
+            raise APIError(
+                "sync_recovery_required",
+                "A pending sync transaction must be recovered before starting another sync",
+                409,
+            )
+
         SYNC_PROGRESS = {"sync_status": "syncing", "stories": []}
-        SYNC_THREAD = threading.Thread(target=sync_worker, args=(payload,), daemon=True)
+        SYNC_THREAD = threading.Thread(
+            target=sync_worker,
+            args=(payload,),
+            daemon=True,
+        )
         SYNC_THREAD.start()
+
     return {"accepted": True}
 
 
@@ -410,11 +876,26 @@ def get_status():
 
 
 def reset_parent_data():
-    for path in (SETUP_FILE, SETTINGS_FILE, WIFI_FILE, SYNC_FILE):
-        path.unlink(missing_ok=True)
-    # Keep downloaded audio and the legacy local story library. The handover
-    # does not yet define which media should be deleted on unpair.
-    return {"ok": True}
+    with STATE_LOCK:
+        if SYNC_THREAD and SYNC_THREAD.is_alive():
+            raise APIError(
+                "busy",
+                "Cannot reset device data while a story sync is running",
+                409,
+            )
+
+        if SYNC_JOURNAL_FILE.is_symlink() or SYNC_JOURNAL_FILE.exists():
+            raise APIError(
+                "sync_recovery_required",
+                "A pending sync transaction must be recovered before reset",
+                409,
+            )
+
+        for path in (SETUP_FILE, SETTINGS_FILE, WIFI_FILE, SYNC_FILE):
+            path.unlink(missing_ok=True)
+
+        # Keep downloaded audio and the legacy local story library.
+        return {"ok": True}
 
 
 class StoryBoxAPIHandler(BaseHTTPRequestHandler):
@@ -516,6 +997,11 @@ def main():
     if HOST not in ("127.0.0.1", "::1", "localhost") and not API_TOKEN:
         raise SystemExit("Refusing LAN bind without STORYBOX_API_TOKEN")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        recover_sync_transaction()
+    except Exception as exc:
+        raise SystemExit(f"StoryBox sync recovery failed; API startup stopped: {exc}") from exc
+
     server = ThreadingHTTPServer((HOST, PORT), StoryBoxAPIHandler)
     print(f"StoryBox local API listening on {HOST}:{PORT}", flush=True)
     try:
