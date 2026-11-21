@@ -35,3 +35,11 @@ backups/
 
 # Local development backups
 *.pre-*
+
+# Test and build artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
