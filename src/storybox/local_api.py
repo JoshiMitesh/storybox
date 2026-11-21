@@ -113,7 +113,11 @@ def initialize_registration_window(now=None):
             return False
         if REGISTRATION_WINDOW_FILE.exists():
             state = read_json(REGISTRATION_WINDOW_FILE, None)
-            if not isinstance(state, dict) or not isinstance(state.get("expires_at"), int):
+            if (
+                not isinstance(state, dict)
+                or isinstance(state.get("expires_at"), bool)
+                or not isinstance(state.get("expires_at"), int)
+            ):
                 raise APIError(
                     "registration_state_invalid",
                     "The StoryBox registration window state is invalid",
