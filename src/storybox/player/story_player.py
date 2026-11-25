@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json, os, re, socket, subprocess, sys, time
 from pathlib import Path
+from threading import Event, Thread
 
 BASE = Path("/home/admin")
 CATALOG = BASE / "story-library.json"
@@ -9,10 +10,20 @@ PROMPTS_DIR = BASE / "story-prompts"
 WELCOME_PROMPT = PROMPTS_DIR / "welcome.wav"
 MPV_SOCKET = "/tmp/lunii-player.sock"
 DEBOUNCE_SECONDS = 0.50
-BUTTONS = {6:"play_pause",1:"next",0:"previous",3:"ok",7:"volume_down",8:"home",9:"volume_up"}
+
+# GPIO lines used by physical buttons. GPIO 9 is reserved for the potentiometer.
+BUTTONS = {6:"play_pause",1:"next",0:"previous",3:"ok",8:"home"}
 ENCODER_CLK = 2   # Orange Pi physical pin 22 (PA2)
 ENCODER_DT = 21   # Orange Pi physical pin 26 (PA21)
 ENCODER_LINES = (ENCODER_CLK, ENCODER_DT)
+POT_GPIO = 9      # Orange Pi physical pin 33
+POT_SAMPLES = 9
+POT_MIN_MS = 0.60
+POT_MAX_MS = 1.40
+POT_TIMEOUT_MS = 20
+POT_FILTER_ALPHA = 0.35
+POT_VOLUME_DEADBAND = 2
+
 last_press = {line:0.0 for line in BUTTONS}
 QUADRATURE = {
     (0b00, 0b01): 1, (0b01, 0b11): 1,
@@ -67,10 +78,107 @@ def handle(action):
     elif action=="ok" and mode=="menu": start_selected(items)
     elif action=="play_pause":
         start_selected(items) if mode=="menu" else send(["cycle","pause"])
-    elif action=="volume_up": send(["add","volume",5])
-    elif action=="volume_down": send(["add","volume",-5])
     elif action=="home":
         mode="menu"; play(WELCOME_PROMPT)
+
+def potentiometer_volume_loop(stop_event):
+    """Read the RC charge time on GPIO 9 and map it to MPV volume."""
+    chip = None
+    request = None
+    try:
+        import gpiod
+        from datetime import timedelta
+        from gpiod import LineSettings
+        from gpiod.line import Direction, Value, Edge
+
+        chip = gpiod.Chip("/dev/gpiochip0")
+        request = chip.request_lines(
+            consumer="storybox-pot-volume",
+            config={
+                POT_GPIO: LineSettings(
+                    direction=Direction.OUTPUT,
+                    output_value=Value.INACTIVE
+                )
+            }
+        )
+        print("Potentiometer volume control active on GPIO line 9.", flush=True)
+
+        filtered_ms = None
+        last_volume = None
+
+        while not stop_event.is_set():
+            readings = []
+
+            for _ in range(POT_SAMPLES):
+                if stop_event.is_set():
+                    break
+
+                # Discharge the capacitor before measuring its next charge.
+                request.reconfigure_lines({
+                    POT_GPIO: LineSettings(
+                        direction=Direction.OUTPUT,
+                        output_value=Value.INACTIVE
+                    )
+                })
+                time.sleep(0.01)
+
+                start_ns = time.monotonic_ns()
+                request.reconfigure_lines({
+                    POT_GPIO: LineSettings(
+                        direction=Direction.INPUT,
+                        edge_detection=Edge.RISING
+                    )
+                })
+
+                if request.wait_edge_events(
+                    timeout=timedelta(milliseconds=POT_TIMEOUT_MS)
+                ):
+                    event = request.read_edge_events()[0]
+                    elapsed_ms = (event.timestamp_ns - start_ns) / 1_000_000
+                    if 0.10 <= elapsed_ms <= 5.0:
+                        readings.append(elapsed_ms)
+
+                if stop_event.wait(0.03):
+                    break
+
+            # Require most of the batch to be valid; ignore incomplete batches.
+            if len(readings) >= 5:
+                median_ms = sorted(readings)[len(readings) // 2]
+                if filtered_ms is None:
+                    filtered_ms = median_ms
+                else:
+                    filtered_ms = (
+                        POT_FILTER_ALPHA * median_ms
+                        + (1.0 - POT_FILTER_ALPHA) * filtered_ms
+                    )
+
+                # More resistance means a longer charge time and lower volume.
+                # Clockwise produces shorter times, therefore louder volume.
+                position = (POT_MAX_MS - filtered_ms) / (POT_MAX_MS - POT_MIN_MS)
+                volume = max(0, min(100, round(position * 100)))
+
+                if last_volume is None or abs(volume - last_volume) >= POT_VOLUME_DEADBAND:
+                    try:
+                        send(["set_property", "volume", volume])
+                        last_volume = volume
+                        print(
+                            f"Pot volume: {volume}% "
+                            f"(charge {filtered_ms:.3f} ms, "
+                            f"{len(readings)}/{POT_SAMPLES} samples)",
+                            flush=True
+                        )
+                    except Exception as exc:
+                        print(f"Potentiometer volume update failed: {exc}", flush=True)
+
+            stop_event.wait(0.05)
+
+    except Exception as exc:
+        print(f"Potentiometer volume control unavailable: {exc}", flush=True)
+    finally:
+        if request is not None:
+            request.release()
+        if chip is not None:
+            chip.close()
 
 def main():
     mpv=start_mpv()
@@ -78,9 +186,19 @@ def main():
         if os.path.exists(MPV_SOCKET): break
         time.sleep(.1)
     else: sys.exit("MPV socket failed")
+
+    pot_stop = Event()
+    pot_thread = Thread(
+        target=potentiometer_volume_loop,
+        args=(pot_stop,),
+        name="storybox-pot-volume",
+        daemon=True
+    )
+    pot_thread.start()
+
     gpio=subprocess.Popen(["gpiomon","-c","gpiochip0","-b","pull-up","-e","both",
         "--format","%E gpiochip0 %o",
-        "6","1","0","3","7","8","9",str(ENCODER_CLK),str(ENCODER_DT)],
+        "6","1","0","3","8",str(ENCODER_CLK),str(ENCODER_DT)],
         stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
     pattern=re.compile(r"(falling|rising)\s+gpiochip0\s+(\d+)")
     # HW-040 channels idle high with the requested pull-ups.
@@ -132,6 +250,8 @@ def main():
                     except Exception as exc:
                         print(f"Encoder handler failed: {exc}",flush=True)
     finally:
+        pot_stop.set()
+        pot_thread.join(timeout=3)
         gpio.terminate()
         try:
             gpio.wait(timeout=3)
