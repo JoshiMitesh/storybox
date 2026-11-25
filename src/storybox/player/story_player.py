@@ -18,8 +18,8 @@ ENCODER_DT = 21   # Orange Pi physical pin 26 (PA21)
 ENCODER_LINES = (ENCODER_CLK, ENCODER_DT)
 POT_GPIO = 9      # Orange Pi physical pin 33
 POT_SAMPLES = 9
-POT_MIN_MS = 0.60
-POT_MAX_MS = 1.40
+POT_MIN_MS = 0.05
+POT_MAX_MS = 1.10
 POT_TIMEOUT_MS = 20
 POT_FILTER_ALPHA = 0.15
 POT_VOLUME_DEADBAND = 3
@@ -137,7 +137,7 @@ def potentiometer_volume_loop(stop_event):
                 ):
                     event = request.read_edge_events()[0]
                     elapsed_ms = (event.timestamp_ns - start_ns) / 1_000_000
-                    if 0.10 <= elapsed_ms <= 5.0:
+                    if 0.01 <= elapsed_ms <= 5.0:
                         readings.append(elapsed_ms)
 
                 if stop_event.wait(0.03):
