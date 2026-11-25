@@ -21,8 +21,8 @@ POT_SAMPLES = 9
 POT_MIN_MS = 0.60
 POT_MAX_MS = 1.40
 POT_TIMEOUT_MS = 20
-POT_FILTER_ALPHA = 0.35
-POT_VOLUME_DEADBAND = 2
+POT_FILTER_ALPHA = 0.15
+POT_VOLUME_DEADBAND = 3
 
 last_press = {line:0.0 for line in BUTTONS}
 QUADRATURE = {
@@ -122,13 +122,15 @@ def potentiometer_volume_loop(stop_event):
                 })
                 time.sleep(0.01)
 
-                start_ns = time.monotonic_ns()
                 request.reconfigure_lines({
                     POT_GPIO: LineSettings(
                         direction=Direction.INPUT,
                         edge_detection=Edge.RISING
                     )
                 })
+                # Start timing only after the GPIO is configured as input.
+                # This excludes variable reconfiguration overhead from the RC measurement.
+                start_ns = time.monotonic_ns()
 
                 if request.wait_edge_events(
                     timeout=timedelta(milliseconds=POT_TIMEOUT_MS)
