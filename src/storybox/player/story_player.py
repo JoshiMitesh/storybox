@@ -10,7 +10,16 @@ WELCOME_PROMPT = PROMPTS_DIR / "welcome.wav"
 MPV_SOCKET = "/tmp/lunii-player.sock"
 DEBOUNCE_SECONDS = 0.50
 BUTTONS = {6:"play_pause",1:"next",0:"previous",3:"ok",7:"volume_down",8:"home",9:"volume_up"}
+ENCODER_CLK = 2   # Orange Pi physical pin 22 (PA2)
+ENCODER_DT = 21   # Orange Pi physical pin 26 (PA21)
+ENCODER_LINES = (ENCODER_CLK, ENCODER_DT)
 last_press = {line:0.0 for line in BUTTONS}
+QUADRATURE = {
+    (0b00, 0b01): 1, (0b01, 0b11): 1,
+    (0b11, 0b10): 1, (0b10, 0b00): 1,
+    (0b01, 0b00): -1, (0b11, 0b01): -1,
+    (0b10, 0b11): -1, (0b00, 0b10): -1,
+}
 selected_story, mode = 0, "menu"
 
 def stories():
@@ -69,22 +78,59 @@ def main():
         if os.path.exists(MPV_SOCKET): break
         time.sleep(.1)
     else: sys.exit("MPV socket failed")
-    gpio=subprocess.Popen(["gpiomon","-c","gpiochip0","-b","pull-up","-e","falling",
+    gpio=subprocess.Popen(["gpiomon","-c","gpiochip0","-b","pull-up","-e","both",
         "--format","%E gpiochip0 %o",
-        "6","1","0","3","7","8","9"],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
-    pattern=re.compile(r"falling\s+gpiochip0\s+(\d+)")
+        "6","1","0","3","7","8","9",str(ENCODER_CLK),str(ENCODER_DT)],
+        stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
+    pattern=re.compile(r"(falling|rising)\s+gpiochip0\s+(\d+)")
+    # HW-040 channels idle high with the requested pull-ups.
+    encoder_state = 0b11
+    encoder_steps = 0
     if WELCOME_PROMPT.exists(): play(WELCOME_PROMPT)
     try:
         for output in gpio.stdout:
             match=pattern.search(output)
             if not match: continue
-            line=int(match.group(1)); now=time.monotonic()
-            if line in BUTTONS and now-last_press[line]>=DEBOUNCE_SECONDS:
-                last_press[line]=now
-                try:
-                    handle(BUTTONS[line])
-                except Exception as exc:
-                    print(f"Button handler failed: {exc}", flush=True)
+            edge=match.group(1)
+            line=int(match.group(2))
+            now=time.monotonic()
+            if line in BUTTONS:
+                # Existing pushbuttons remain active-low; ignore their rising edges.
+                if edge != "falling": continue
+                if now-last_press[line]>=DEBOUNCE_SECONDS:
+                    last_press[line]=now
+                    try:
+                        handle(BUTTONS[line])
+                    except Exception as exc:
+                        print(f"Button handler failed: {exc}", flush=True)
+            elif line in ENCODER_LINES:
+                # Decode both channels together; one complete quadrature cycle is one click.
+                previous_state=encoder_state
+                level=1 if edge=="rising" else 0
+                if line==ENCODER_CLK:
+                    encoder_state=(encoder_state & 0b01) | (level << 1)
+                else:
+                    encoder_state=(encoder_state & 0b10) | level
+                step=QUADRATURE.get((previous_state,encoder_state),0)
+                if step:
+                    encoder_steps += step
+                elif previous_state != encoder_state:
+                    # Ignore invalid two-bit jumps caused by contact bounce or missed edges.
+                    encoder_steps=0
+                if encoder_steps >= 4:
+                    encoder_steps=0
+                    try:
+                        print("Rotary encoder: next",flush=True)
+                        handle("next")
+                    except Exception as exc:
+                        print(f"Encoder handler failed: {exc}",flush=True)
+                elif encoder_steps <= -4:
+                    encoder_steps=0
+                    try:
+                        print("Rotary encoder: previous",flush=True)
+                        handle("previous")
+                    except Exception as exc:
+                        print(f"Encoder handler failed: {exc}",flush=True)
     finally:
         gpio.terminate()
         try:
