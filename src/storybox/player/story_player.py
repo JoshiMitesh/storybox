@@ -17,12 +17,12 @@ ENCODER_CLK = 2   # Orange Pi physical pin 22 (PA2)
 ENCODER_DT = 21   # Orange Pi physical pin 26 (PA21)
 ENCODER_LINES = (ENCODER_CLK, ENCODER_DT)
 POT_GPIO = 9      # Orange Pi physical pin 33
-POT_SAMPLES = 9
+POT_SAMPLES = 5
 POT_MIN_MS = 0.20
 POT_MAX_MS = 1.10
 POT_TIMEOUT_MS = 20
-POT_FILTER_ALPHA = 0.15
-POT_VOLUME_DEADBAND = 3
+POT_FILTER_ALPHA = 0.50
+POT_VOLUME_DEADBAND = 2
 
 last_press = {line:0.0 for line in BUTTONS}
 QUADRATURE = {
@@ -140,9 +140,6 @@ def potentiometer_volume_loop(stop_event):
                     if 0.01 <= elapsed_ms <= 5.0:
                         readings.append(elapsed_ms)
 
-                if stop_event.wait(0.03):
-                    break
-
             # Require most of the batch to be valid; ignore incomplete batches.
             if len(readings) >= 5:
                 median_ms = sorted(readings)[len(readings) // 2]
@@ -172,7 +169,7 @@ def potentiometer_volume_loop(stop_event):
                     except Exception as exc:
                         print(f"Potentiometer volume update failed: {exc}", flush=True)
 
-            stop_event.wait(0.05)
+            stop_event.wait(0.02)
 
     except Exception as exc:
         print(f"Potentiometer volume control unavailable: {exc}", flush=True)
