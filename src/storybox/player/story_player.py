@@ -105,6 +105,7 @@ def potentiometer_volume_loop(stop_event):
 
         filtered_ms = None
         last_volume = None
+        pot_batch_count = 0
 
         while not stop_event.is_set():
             readings = []
@@ -142,7 +143,15 @@ def potentiometer_volume_loop(stop_event):
 
             # Require most of the batch to be valid; ignore incomplete batches.
             if len(readings) >= 5:
+                pot_batch_count += 1
                 median_ms = sorted(readings)[len(readings) // 2]
+                # Temporary diagnostic: show raw timing samples about once per second.
+                if pot_batch_count % 10 == 0:
+                    raw_text = ", ".join(f"{value:.3f}" for value in readings)
+                    print(
+                        f"Pot raw diagnostic: [{raw_text}] ms; median {median_ms:.3f} ms",
+                        flush=True
+                    )
                 if filtered_ms is None:
                     filtered_ms = median_ms
                 else:
