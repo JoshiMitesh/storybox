@@ -17,7 +17,7 @@ ENCODER_CLK = 2   # Orange Pi physical pin 22 (PA2)
 ENCODER_DT = 21   # Orange Pi physical pin 26 (PA21)
 ENCODER_LINES = (ENCODER_CLK, ENCODER_DT)
 POT_GPIO = 9      # Orange Pi physical pin 33
-POT_SAMPLES = 5
+POT_SAMPLES = 15
 POT_MIN_MS = 0.20
 POT_MAX_MS = 1.10
 POT_TIMEOUT_MS = 20
@@ -142,7 +142,7 @@ def potentiometer_volume_loop(stop_event):
                         readings.append(elapsed_ms)
 
             # Require most of the batch to be valid; ignore incomplete batches.
-            if len(readings) >= 5:
+            if len(readings) >= 8:
                 pot_batch_count += 1
                 median_ms = sorted(readings)[len(readings) // 2]
                 # Temporary diagnostic: show raw timing samples about once per second.
