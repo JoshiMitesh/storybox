@@ -22,7 +22,8 @@ POT_MIN_MS = 0.20
 POT_MAX_MS = 1.05
 POT_TIMEOUT_MS = 20
 POT_FILTER_ALPHA = 0.50
-POT_VOLUME_DEADBAND = 2
+POT_VOLUME_DEADBAND = 4
+POT_CONFIRM_BATCHES = 2
 
 last_press = {line:0.0 for line in BUTTONS}
 QUADRATURE = {
@@ -105,6 +106,8 @@ def potentiometer_volume_loop(stop_event):
 
         filtered_ms = None
         last_volume = None
+        pending_direction = 0
+        pending_batches = 0
         pot_batch_count = 0
 
         while not stop_event.is_set():
@@ -165,7 +168,7 @@ def potentiometer_volume_loop(stop_event):
                 position = (POT_MAX_MS - filtered_ms) / (POT_MAX_MS - POT_MIN_MS)
                 volume = max(0, min(100, round(position * 100)))
 
-                if last_volume is None or abs(volume - last_volume) >= POT_VOLUME_DEADBAND:
+                if last_volume is None:
                     try:
                         send(["set_property", "volume", volume])
                         last_volume = volume
@@ -177,6 +180,36 @@ def potentiometer_volume_loop(stop_event):
                         )
                     except Exception as exc:
                         print(f"Potentiometer volume update failed: {exc}", flush=True)
+                else:
+                    difference = volume - last_volume
+                    direction = 1 if difference > 0 else -1 if difference < 0 else 0
+
+                    # Ignore small changes. Require movement in the same
+                    # direction across consecutive batches before updating.
+                    if abs(difference) >= POT_VOLUME_DEADBAND:
+                        if direction == pending_direction:
+                            pending_batches += 1
+                        else:
+                            pending_direction = direction
+                            pending_batches = 1
+
+                        if pending_batches >= POT_CONFIRM_BATCHES:
+                            try:
+                                send(["set_property", "volume", volume])
+                                last_volume = volume
+                                print(
+                                    f"Pot volume: {volume}% "
+                                    f"(charge {filtered_ms:.3f} ms, "
+                                    f"{len(readings)}/{POT_SAMPLES} samples)",
+                                    flush=True
+                                )
+                            except Exception as exc:
+                                print(f"Potentiometer volume update failed: {exc}", flush=True)
+                            pending_direction = 0
+                            pending_batches = 0
+                    else:
+                        pending_direction = 0
+                        pending_batches = 0
 
             stop_event.wait(0.02)
 
