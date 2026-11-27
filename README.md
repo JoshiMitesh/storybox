@@ -37,11 +37,11 @@ sudo apt-get update
 sudo apt-get install -y git ca-certificates
 git clone -b final_working_storybox https://github.com/JoshiMitesh/storybox.git
 cd storybox
-sudo bash scripts/install-storybox.sh
+sudo bash scripts/setup-storybox.sh
 sudo reboot
 ```
 
-The main installer automatically runs `scripts/install-requirements.sh`, which installs the required apt packages and creates a project-local `.venv` for development/test dependencies. It does not use global pip to modify Debian's system Python.
+The recommended first-time entry point is `scripts/setup-storybox.sh`. It checks the supported OS/architecture and repository files, creates the `admin` account only if missing (prompting interactively for its password), ensures it is in the `sudo` group, invokes the full installer, and runs repository verification. The underlying installer runs `scripts/install-requirements.sh` to install apt packages and create a project-local `.venv`; it does not use global pip to modify Debian's system Python. An existing admin password and home are preserved.
 
 ### What the installer does
 
@@ -53,7 +53,7 @@ The main installer automatically runs `scripts/install-requirements.sh`, which i
 6. Creates the `gpio` and `i2c` groups if missing and adds `admin` to `gpio`, `audio`, and `i2c`.
 7. Installs the application under `/opt/storybox`, the GPIO udev rule, and all four systemd unit files.
 8. Preserves an existing `/etc/storybox/local-api.env`; creates a loopback-only default only if it does not exist.
-9. Enables the player, watcher, and local API for boot. It installs the Wi-Fi manager without changing whether that service is already enabled. On a fresh device it remains disabled by default.
+9. Enables the player, watcher, and local API for boot. It installs the Wi-Fi manager without changing whether that service is already enabled. On a fresh device it remains disabled by default. The `setup-storybox.sh` entry point leaves Wi-Fi configuration untouched unless explicitly called with `--configure-wifi`.
 
 The installer does **not** overwrite story audio, generated prompts, the story catalog, API authentication/state files, existing API environment settings, saved NetworkManager Wi-Fi profiles, or existing hotspot configuration files.
 
@@ -210,6 +210,7 @@ The voice repository identifies its model files as MIT licensed. Keep the upstre
 
 ```text
 src/storybox/                 Player, local API, Wi-Fi modules
+scripts/setup-storybox.sh     Recommended first-time setup entry point
 scripts/install-storybox.sh   Main Orange Pi installer
 scripts/install-requirements.sh OS and Python dependency installer
 scripts/setup-device.sh       Compatibility wrapper for main installer
@@ -228,5 +229,5 @@ docs/                         API and integration documentation
 - Never commit Wi-Fi passwords, bearer tokens, private keys, device identity files, or API authentication state.
 - Never commit story audio, generated WAV prompts, or the device-specific story catalog.
 - Keep `/etc/storybox/local-api.env` and `/home/admin/.local/share/storybox/` private.
-- The unified installer is intended for a fresh/supported Orange Pi PC Plus installation and requires the `admin` account.
+- The unified setup is intended for a fresh/supported Orange Pi PC Plus installation. It can create the `admin` account interactively when missing; the lower-level `install-storybox.sh` still requires that account.
 - The Wi-Fi configuration script is intentionally separate because it can affect connectivity.
