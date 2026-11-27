@@ -10,7 +10,7 @@ pass() { echo "PASS: $*"; }
 bad() { echo "FAIL: $*"; fail=1; }
 
 echo "=== Required repository files ==="
-for f in README.md requirements-dev.txt scripts/install-requirements.sh scripts/install-storybox.sh scripts/setup-device.sh scripts/install.sh scripts/storybox_watcher.py src/storybox/player/story_player.py src/storybox/local_api.py src/storybox/wifi/wifi_manager.py src/storybox/wifi/portal.py src/storybox/wifi/connect_wifi.py systemd/storybox-player.service systemd/storybox-watcher.service systemd/storybox-wifi.service systemd/storybox-local-api.service udev/99-storybox-gpio.rules config/local-api.env.example; do
+for f in README.md requirements-dev.txt scripts/install-requirements.sh scripts/install-storybox.sh scripts/setup-storybox.sh scripts/setup-device.sh scripts/install.sh scripts/storybox_watcher.py src/storybox/player/story_player.py src/storybox/local_api.py src/storybox/wifi/wifi_manager.py src/storybox/wifi/portal.py src/storybox/wifi/connect_wifi.py systemd/storybox-player.service systemd/storybox-watcher.service systemd/storybox-wifi.service systemd/storybox-local-api.service udev/99-storybox-gpio.rules config/local-api.env.example; do
   [[ -f "$f" ]] && pass "$f" || bad "Missing $f"
 done
 
