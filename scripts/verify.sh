@@ -67,7 +67,7 @@ if [[ "$DEVICE_MODE" == "--device" ]]; then
   for unit in storybox-player storybox-watcher storybox-local-api; do
     systemctl is-active --quiet "$unit.service" && pass "$unit active" || bad "$unit is not active"
   done
-  [[ -f /etc/storybox/local-api.env ]] && pass "API environment file exists" || bad "API environment file missing"
+  sudo test -f /etc/storybox/local-api.env && pass "API environment file exists (root-protected)" || bad "API environment file missing or cannot be checked with sudo"
 fi
 
 echo
