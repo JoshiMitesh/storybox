@@ -122,6 +122,26 @@ class LocalAPITests(unittest.TestCase):
             ])
 
 
+class DevicePairingQRTests(unittest.TestCase):
+    def test_qr_is_stable_for_same_persistent_device_identity(self):
+        identity = {"device_id": "sb-00000000-0000-4000-8000-000000000001"}
+        with patch.object(local_api, "get_device_identity", return_value=identity):
+            first = local_api.device_pairing_qr_svg()
+            second = local_api.device_pairing_qr_svg()
+
+        self.assertEqual(first, second)
+        self.assertIn(b"<svg", first)
+
+    def test_qr_payload_excludes_network_and_auth_secrets(self):
+        identity = {"device_id": "sb-00000000-0000-4000-8000-000000000001"}
+        with patch.object(local_api, "get_device_identity", return_value=identity):
+            first = local_api.device_pairing_qr_svg()
+
+        self.assertNotIn(b"192.168.", first)
+        self.assertNotIn(b"Bearer", first)
+        self.assertNotIn(b"password", first.lower())
+
+
 class SyncRecoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
