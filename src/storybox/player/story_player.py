@@ -83,28 +83,44 @@ def handle(action):
         mode="menu"; play(WELCOME_PROMPT)
 
 def potentiometer_volume_loop(stop_event):
-    """Read the RC charge time on GPIO 9 and map it to MPV volume."""
-    chip = None
-    request = None
+    """Read the ADS1115 potentiometer and map its position to MPV volume."""
+    bus = None
+
     try:
-        import gpiod
-        from datetime import timedelta
-        from gpiod import LineSettings
-        from gpiod.line import Direction, Value, Edge
+        import smbus
 
-        chip = gpiod.Chip("/dev/gpiochip0")
-        request = chip.request_lines(
-            consumer="storybox-pot-volume",
-            config={
-                POT_GPIO: LineSettings(
-                    direction=Direction.OUTPUT,
-                    output_value=Value.INACTIVE
-                )
-            }
+        POT_I2C_BUS = 0
+        POT_I2C_ADDRESS = 0x48
+        POT_ADC_REGISTER = 0x00
+        POT_CONFIG_REGISTER = 0x01
+
+        POT_RAW_MIN = 0
+        POT_RAW_MAX = 26105
+        POT_SAMPLES = 7
+        POT_FILTER_ALPHA = 0.35
+        POT_VOLUME_DEADBAND = 4
+        POT_CONFIRM_BATCHES = 2
+
+        bus = smbus.SMBus(POT_I2C_BUS)
+
+        # A0, +/-4.096V, continuous conversion, 128 samples/second.
+        config = 0x4283
+        config_swapped = ((config & 0xFF) << 8) | (config >> 8)
+        bus.write_word_data(
+            POT_I2C_ADDRESS,
+            POT_CONFIG_REGISTER,
+            config_swapped
         )
-        print("Potentiometer volume control active on GPIO line 9.", flush=True)
 
-        filtered_ms = None
+        time.sleep(0.05)
+
+        print(
+            "ADS1115 potentiometer volume control active "
+            "on I2C bus 0, address 0x48, channel A0.",
+            flush=True
+        )
+
+        filtered_raw = None
         last_volume = None
         pending_direction = 0
         pending_batches = 0
@@ -117,75 +133,73 @@ def potentiometer_volume_loop(stop_event):
                 if stop_event.is_set():
                     break
 
-                # Discharge the capacitor before measuring its next charge.
-                request.reconfigure_lines({
-                    POT_GPIO: LineSettings(
-                        direction=Direction.OUTPUT,
-                        output_value=Value.INACTIVE
-                    )
-                })
-                time.sleep(0.01)
+                raw_word = bus.read_word_data(
+                    POT_I2C_ADDRESS,
+                    POT_ADC_REGISTER
+                )
 
-                request.reconfigure_lines({
-                    POT_GPIO: LineSettings(
-                        direction=Direction.INPUT,
-                        edge_detection=Edge.RISING
-                    )
-                })
-                # Start timing only after the GPIO is configured as input.
-                # This excludes variable reconfiguration overhead from the RC measurement.
-                start_ns = time.monotonic_ns()
+                # SMBus returns the two bytes in reverse order.
+                raw = ((raw_word & 0xFF) << 8) | (raw_word >> 8)
 
-                if request.wait_edge_events(
-                    timeout=timedelta(milliseconds=POT_TIMEOUT_MS)
-                ):
-                    event = request.read_edge_events()[0]
-                    elapsed_ms = (event.timestamp_ns - start_ns) / 1_000_000
-                    if 0.01 <= elapsed_ms <= 5.0:
-                        readings.append(elapsed_ms)
+                # Convert signed 16-bit ADC result.
+                if raw & 0x8000:
+                    raw -= 0x10000
 
-            # Require most of the batch to be valid; ignore incomplete batches.
-            if len(readings) >= 8:
+                if 0 <= raw <= 32767:
+                    readings.append(raw)
+
+                if stop_event.wait(0.01):
+                    break
+
+            if len(readings) >= 5:
                 pot_batch_count += 1
-                median_ms = sorted(readings)[len(readings) // 2]
-                # Temporary diagnostic: show raw timing samples about once per second.
-                if pot_batch_count % 10 == 0:
-                    raw_text = ", ".join(f"{value:.3f}" for value in readings)
+                median_raw = sorted(readings)[len(readings) // 2]
+
+                if filtered_raw is None:
+                    filtered_raw = median_raw
+                else:
+                    filtered_raw = (
+                        POT_FILTER_ALPHA * median_raw
+                        + (1.0 - POT_FILTER_ALPHA) * filtered_raw
+                    )
+
+                # With the current wiring, clockwise rotation lowers
+                # the ADC voltage and increases the volume.
+                position = (
+                    POT_RAW_MAX - filtered_raw
+                ) / (POT_RAW_MAX - POT_RAW_MIN)
+
+                position = max(0.0, min(1.0, position))
+                volume = round(position * 100)
+
+                if pot_batch_count % 20 == 0:
                     print(
-                        f"Pot raw diagnostic: [{raw_text}] ms; median {median_ms:.3f} ms",
+                        f"Pot ADC diagnostic: raw={median_raw}, "
+                        f"filtered={filtered_raw:.1f}, volume={volume}%",
                         flush=True
                     )
-                if filtered_ms is None:
-                    filtered_ms = median_ms
-                else:
-                    filtered_ms = (
-                        POT_FILTER_ALPHA * median_ms
-                        + (1.0 - POT_FILTER_ALPHA) * filtered_ms
-                    )
-
-                # More resistance means a longer charge time and lower volume.
-                # Clockwise produces shorter times, therefore louder volume.
-                position = (POT_MAX_MS - filtered_ms) / (POT_MAX_MS - POT_MIN_MS)
-                volume = max(0, min(100, round(position * 100)))
 
                 if last_volume is None:
                     try:
                         send(["set_property", "volume", volume])
                         last_volume = volume
                         print(
-                            f"Pot volume: {volume}% "
-                            f"(charge {filtered_ms:.3f} ms, "
-                            f"{len(readings)}/{POT_SAMPLES} samples)",
+                            f"Pot volume initialized: {volume}%",
                             flush=True
                         )
                     except Exception as exc:
-                        print(f"Potentiometer volume update failed: {exc}", flush=True)
+                        print(
+                            f"Potentiometer volume update failed: {exc}",
+                            flush=True
+                        )
                 else:
                     difference = volume - last_volume
-                    direction = 1 if difference > 0 else -1 if difference < 0 else 0
+                    direction = (
+                        1 if difference > 0
+                        else -1 if difference < 0
+                        else 0
+                    )
 
-                    # Ignore small changes. Require movement in the same
-                    # direction across consecutive batches before updating.
                     if abs(difference) >= POT_VOLUME_DEADBAND:
                         if direction == pending_direction:
                             pending_batches += 1
@@ -199,27 +213,32 @@ def potentiometer_volume_loop(stop_event):
                                 last_volume = volume
                                 print(
                                     f"Pot volume: {volume}% "
-                                    f"(charge {filtered_ms:.3f} ms, "
-                                    f"{len(readings)}/{POT_SAMPLES} samples)",
+                                    f"(ADC raw {median_raw})",
                                     flush=True
                                 )
                             except Exception as exc:
-                                print(f"Potentiometer volume update failed: {exc}", flush=True)
+                                print(
+                                    f"Potentiometer volume update failed: {exc}",
+                                    flush=True
+                                )
+
                             pending_direction = 0
                             pending_batches = 0
                     else:
                         pending_direction = 0
                         pending_batches = 0
 
-            stop_event.wait(0.02)
+            if stop_event.wait(0.02):
+                break
 
     except Exception as exc:
-        print(f"Potentiometer volume control unavailable: {exc}", flush=True)
+        print(
+            f"ADS1115 potentiometer volume control unavailable: {exc}",
+            flush=True
+        )
     finally:
-        if request is not None:
-            request.release()
-        if chip is not None:
-            chip.close()
+        if bus is not None:
+            bus.close()
 
 def main():
     mpv=start_mpv()
@@ -276,14 +295,14 @@ def main():
                 elif previous_state != encoder_state:
                     # Ignore invalid two-bit jumps caused by contact bounce or missed edges.
                     encoder_steps=0
-                if encoder_steps >= 4:
+                if encoder_steps >= 10:
                     encoder_steps=0
                     try:
                         print("Rotary encoder: next",flush=True)
                         handle("next")
                     except Exception as exc:
                         print(f"Encoder handler failed: {exc}",flush=True)
-                elif encoder_steps <= -4:
+                elif encoder_steps <= -10:
                     encoder_steps=0
                     try:
                         print("Rotary encoder: previous",flush=True)
