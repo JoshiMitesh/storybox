@@ -10,7 +10,7 @@ PIPER_RELEASE="2023.11.14-2"
 PIPER_URL="https://github.com/rhasspy/piper/releases/download/${PIPER_RELEASE}/piper_linux_armv7l.tar.gz"
 MODEL_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium"
 MODEL_SHA256="5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f"
-MODEL_MD5="2fc642b535197b6305c7c8f92dc8b24f"
+MODEL_MD5="c1f2b7bddefe113f3255ff9ef234cfd3"
 
 if [[ "$EUID" -ne 0 ]]; then echo "Run: sudo bash scripts/install-storybox.sh"; exit 1; fi
 if [[ "$DEVICE_USER" != "admin" ]] || ! id admin >/dev/null 2>&1; then

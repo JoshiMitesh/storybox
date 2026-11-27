@@ -44,7 +44,7 @@ if grep -RInE '/home/admin/storybox-wifi|/home/admin/storybox-hotspot\.conf|/hom
 else
   pass "No legacy Wi-Fi paths"
 fi
-if find . -type f \( -name 'wpa_supplicant.conf' -o -name '*.pem' -o -name '*.key' -o -name '*.mp3' -o -name '*.wav' -o -name 'story-library.json' -o -name 'auth.json' \) -print | grep .; then
+if find . -type d \( -name .venv -o -name .git \) -prune -o -type f \( -name 'wpa_supplicant.conf' -o -name '*.pem' -o -name '*.key' -o -name '*.mp3' -o -name '*.wav' -o -name 'story-library.json' -o -name 'auth.json' \) -print | grep .; then
   bad "Review private/device runtime files listed above"
 else
   pass "No obvious private/device runtime files"
