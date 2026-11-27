@@ -14,7 +14,7 @@ main{max-width:1100px;margin:24px auto;padding:0 16px;display:grid;grid-template
 section{background:#182231;border:1px solid #344256;border-radius:12px;padding:18px;min-width:0}
 h2{font-size:17px;margin:0 0 14px}
 label{display:block;margin:14px 0 6px;color:#b9c6d7;font-size:13px}
-.account{background:#111b29;border:1px solid #344256;border-radius:9px;padding:14px;margin-bottom:18px}.account h2{margin-bottom:8px}.account button{margin-top:10px;width:100%}input,select,textarea{width:100%;padding:11px;border:1px solid #46566c;border-radius:7px;background:#0e1622;color:#f2f5fa;font:14px monospace}
+.qr-card{display:flex;align-items:center;gap:18px;background:#111b29;border:1px solid #344256;border-radius:9px;padding:14px;margin-bottom:18px}.qr-card img{width:180px;height:180px;background:white;border-radius:8px;padding:8px}.qr-copy{min-width:0}.qr-copy p{color:#aab8ca;font-size:13px;line-height:1.5}.account{background:#111b29;border:1px solid #344256;border-radius:9px;padding:14px;margin-bottom:18px}.account h2{margin-bottom:8px}.account button{margin-top:10px;width:100%}input,select,textarea{width:100%;padding:11px;border:1px solid #46566c;border-radius:7px;background:#0e1622;color:#f2f5fa;font:14px monospace}
 textarea{min-height:210px;resize:vertical;line-height:1.5}
 button{padding:10px 15px;border:0;border-radius:7px;background:#3478df;color:white;font-weight:650;cursor:pointer}
 button:disabled{opacity:.5}
@@ -25,7 +25,7 @@ button:disabled{opacity:.5}
 .muted{color:#9eacc0;font-size:12px}
 #response{white-space:pre-wrap;overflow-wrap:anywhere;background:#0b111a;padding:14px;border-radius:8px;min-height:120px;max-height:450px;overflow:auto;font:13px monospace}
 #resultMeta{margin:12px 0;color:#aab8ca}
-@media(max-width:720px){main{grid-template-columns:1fr}}
+@media(max-width:720px){main{grid-template-columns:1fr}.qr-card{align-items:flex-start;flex-direction:column}.qr-card img{width:160px;height:160px}}
 </style>
 </head>
 <body>
@@ -51,6 +51,15 @@ button:disabled{opacity:.5}
 <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Your admin password">
 <button id="login">Login</button>
 <p id="authMessage" class="muted">First-time setup is available for 10 minutes after the API first starts. Use a trusted setup network, create an admin password, and then log in with the same password.</p>
+</div>
+
+<div class="qr-card">
+ <img src="/device/qr.svg" alt="Stable StoryBox device QR code">
+ <div class="qr-copy">
+  <h2>StoryBox Device QR</h2>
+  <p>This QR identifies this StoryBox device using its persistent device ID. It stays the same across page refreshes, API restarts, and reboots.</p>
+  <p class="muted">Development pairing identity only. It does not contain Wi-Fi passwords or login tokens.</p>
+ </div>
 </div>
 
 <h2>Request</h2>
