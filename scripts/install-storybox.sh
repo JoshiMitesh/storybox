@@ -44,7 +44,7 @@ OVERLAY="/boot/dtb-$(uname -r)/overlay/sun8i-h3-i2c0.dtbo"
 [[ -f "$BOOT_ENV" ]] || { echo "ERROR: $BOOT_ENV not found; expected Armbian."; exit 1; }
 [[ -f "$OVERLAY" ]] || { echo "ERROR: Matching H3 I2C0 overlay missing: $OVERLAY"; exit 1; }
 grep -q '^overlays=' "$BOOT_ENV" || { echo "ERROR: no overlays= setting; refusing to guess."; exit 1; }
-if ! grep '^overlays=' "$BOOT_ENV" | grep -Eq '(^|[[:space:]])i2c0([[:space:]]|$)'; then
+if ! grep '^overlays=' "$BOOT_ENV" | grep -Eq '(^|[[:space:]=])i2c0([[:space:]]|$)'; then
   cp -a "$BOOT_ENV" "$BOOT_ENV.storybox-backup.$(date +%Y%m%d%H%M%S)"
   python3 - "$BOOT_ENV" <<'PY'
 from pathlib import Path

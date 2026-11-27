@@ -27,7 +27,7 @@ apt-get install -y --no-install-recommends \
 
 echo "=== Checking GPIO command support ==="
 command -v gpiomon >/dev/null
-if ! gpiomon --help 2>&1 | grep -q -- '-c'; then
+if ! gpiomon --help 2>&1 | grep -- '-c' >/dev/null; then
   echo "ERROR: Installed gpiomon does not expose the required -c option."
   exit 1
 fi
