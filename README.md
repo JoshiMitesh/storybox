@@ -52,7 +52,7 @@ The main installer automatically runs `scripts/install-requirements.sh`, which i
 6. Creates the `gpio` and `i2c` groups if missing and adds `admin` to `gpio`, `audio`, and `i2c`.
 7. Installs the application under `/opt/storybox`, the GPIO udev rule, and all four systemd unit files.
 8. Preserves an existing `/etc/storybox/local-api.env`; creates a loopback-only default only if it does not exist.
-9. Enables the player, watcher, and local API for boot. It installs but deliberately does not enable the Wi-Fi manager.
+9. Enables the player, watcher, and local API for boot. It installs the Wi-Fi manager without changing whether that service is already enabled. On a fresh device it remains disabled by default.
 
 The installer does **not** overwrite story audio, generated prompts, the story catalog, API authentication/state files, existing API environment settings, saved NetworkManager Wi-Fi profiles, or existing hotspot configuration files.
 
@@ -104,7 +104,7 @@ sudo journalctl -u storybox-local-api.service -b --no-pager
 | `storybox-player.service` | Physical controls and audio playback | Installed and enabled |
 | `storybox-watcher.service` | Story catalog and Piper prompt generation | Installed and enabled |
 | `storybox-local-api.service` | Local device HTTP API | Installed and enabled |
-| `storybox-wifi.service` | Home Wi-Fi monitor and fallback setup hotspot | Installed, left disabled |
+| `storybox-wifi.service` | Home Wi-Fi monitor and fallback setup hotspot | Installed; existing enablement state preserved |
 
 The Wi-Fi manager is intentionally not enabled automatically. Its separate configuration script changes NetworkManager handling for `wlan1`, installs hotspot configuration, removes legacy networking files, and enforces the current fixed setup-hotspot password. Keep local/HDMI access available and review the current wireless setup before using it.
 
