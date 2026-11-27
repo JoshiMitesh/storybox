@@ -156,7 +156,7 @@ systemctl enable storybox-player.service storybox-watcher.service storybox-local
 
 echo
 echo "Installation complete."
-echo "Enabled: player, watcher, local API. Installed but disabled: Wi-Fi manager."
+echo "Enabled: player, watcher, local API. Wi-Fi unit installed; existing enablement state unchanged."
 echo "Preserved: existing Wi-Fi profiles/configuration, API env/auth, stories, prompts and catalog."
 echo "Reboot required for I2C0 and admin group membership."
 echo "After reboot: bash scripts/verify.sh --device"
