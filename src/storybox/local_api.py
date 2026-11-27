@@ -26,9 +26,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-import qrcode
-from qrcode.image.svg import SvgPathImage
-
 from storybox.device_identity import get_device_identity, identity_path
 
 HOME = Path(os.environ.get("STORYBOX_HOME", "/home/admin"))
@@ -282,6 +279,9 @@ def device_pairing_qr_svg():
     The payload deliberately excludes IP addresses, credentials, and bearer
     tokens so it remains unchanged across network changes and restarts.
     """
+    import qrcode
+    from qrcode.image.svg import SvgPathImage
+
     identity = get_device_identity()
     payload = json.dumps({
         "type": "storybox-device",
