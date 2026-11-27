@@ -18,7 +18,7 @@ apt-get update
 
 echo "=== Installing StoryBox runtime and build/test requirements ==="
 apt-get install -y --no-install-recommends \
-  python3 python3-pip python3-venv python3-smbus python3-libgpiod python3-qrcode \
+  sudo python3 python3-pip python3-venv python3-smbus python3-libgpiod python3-qrcode \
   mpv gpiod ffmpeg alsa-utils i2c-tools \
   network-manager hostapd dnsmasq iw iproute2 \
   libatomic1 libstdc++6 libgcc-s1 libgomp1 \
