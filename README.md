@@ -14,6 +14,7 @@ This branch is the consolidated device setup branch: `final_working_storybox`.
 - Automatic catalog and prompt maintenance when stories are added or removed.
 - Optional NetworkManager-based home Wi-Fi and fallback setup hotspot.
 - Local HTTP device API with first-time registration and bearer-token authentication.
+- Stable device-identity QR code displayed in the API browser console for development pairing.
 
 ## Hardware and OS
 
@@ -137,7 +138,7 @@ sudo systemctl restart storybox-local-api.service
 sudo systemctl status storybox-local-api.service --no-pager
 ```
 
-Open `http://<ORANGE-PI-IP>:8089/console` from a device on the same trusted network. On first startup, the API opens a one-time ten-minute registration window. Register the admin account with a password of at least ten characters. The API stores authentication state under `/home/admin/.local/share/storybox`; do not delete this directory unless you intentionally want to reset device authentication.
+Open `http://<ORANGE-PI-IP>:8089/console` from a device on the same trusted network. The console displays a QR code derived only from the persistent device ID; it remains the same across refreshes and reboots and contains no credentials or bearer token. On first startup, the API opens a one-time ten-minute registration window. Register the admin account with a password of at least ten characters. The API stores authentication state under `/home/admin/.local/share/storybox`; do not delete this directory unless you intentionally want to reset device authentication.
 
 The API uses HTTP and bearer-token authentication. Expose it only on a trusted local network; do not forward the port to the public internet.
 
