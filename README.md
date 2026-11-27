@@ -22,7 +22,7 @@ Supported target:
 
 - Orange Pi PC Plus (Allwinner H3), Armbian/Debian 32-bit ARM hard-float (`armhf`).
 - Linux machine architecture `armv7l`.
-- Existing Linux user account `admin`.
+- Linux runtime account `admin` (the unified setup script creates it interactively if it does not already exist).
 - Audio output supported by ALSA; the current player configuration uses `plughw:0,0`.
 - GPIO controls and ADS1115 wired according to the configuration in `src/storybox/player/story_player.py`.
 
@@ -109,7 +109,7 @@ sudo journalctl -u storybox-local-api.service -b --no-pager
 
 The Wi-Fi manager is intentionally not enabled automatically. Its separate configuration script changes NetworkManager handling for `wlan1`, installs hotspot configuration, removes legacy networking files, and enforces the current fixed setup-hotspot password. Keep local/HDMI access available and review the current wireless setup before using it.
 
-If you intentionally want to configure the fallback hotspot, first review `scripts/install.sh` and then run:
+If you intentionally want to configure the fallback hotspot during the unified first-time setup, run `sudo bash scripts/setup-storybox.sh --configure-wifi` instead of the default setup command. For a later/manual Wi-Fi-only configuration, first review `scripts/install.sh` and then run:
 
 ```bash
 sudo bash scripts/install.sh
