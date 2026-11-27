@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-REPO_DIR="$(cd -- "$(dirname -- "\${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIGURE_WIFI=0
 usage() {
   echo "Usage: sudo bash scripts/setup-storybox.sh [--configure-wifi]"
@@ -19,7 +19,7 @@ echo "=== StoryBox first-time setup ==="
 [[ -x /usr/bin/apt-get ]] || { echo "ERROR: apt-get is required."; exit 1; }
 [[ -r /etc/os-release ]] || { echo "ERROR: Cannot identify OS."; exit 1; }
 . /etc/os-release
-case "\${ID:-}" in debian|ubuntu|armbian) ;; *) echo "ERROR: Unsupported OS ID '\${ID:-unknown}'."; exit 1 ;; esac
+case "${ID:-}" in debian|ubuntu|armbian) ;; *) echo "ERROR: Unsupported OS ID '${ID:-unknown}'."; exit 1 ;; esac
 MACHINE="$(uname -m)"
 ARCH="$(dpkg --print-architecture)"
 [[ "$MACHINE" == armv7l || "$MACHINE" == armv8l ]] || { echo "ERROR: Requires ARMv7/armv8; found $MACHINE."; exit 1; }
