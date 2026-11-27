@@ -26,6 +26,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import qrcode
+from qrcode.image.svg import SvgPathImage
+
 from storybox.device_identity import get_device_identity, identity_path
 
 HOME = Path(os.environ.get("STORYBOX_HOME", "/home/admin"))
@@ -271,6 +274,30 @@ def device_info():
         "device_name": setup.get("name") or identity.get("name") or "StoryBox",
         "firmware_version": FIRMWARE_VERSION,
     }
+
+
+def device_pairing_qr_svg():
+    """Return a deterministic QR code for this device's persistent identity.
+
+    The payload deliberately excludes IP addresses, credentials, and bearer
+    tokens so it remains unchanged across network changes and restarts.
+    """
+    identity = get_device_identity()
+    payload = json.dumps({
+        "type": "storybox-device",
+        "version": 1,
+        "device_id": identity["device_id"],
+    }, sort_keys=True, separators=(",", ":"))
+    code = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=8,
+        border=4,
+    )
+    code.add_data(payload)
+    code.make(fit=True)
+    image = code.make_image(image_factory=SvgPathImage)
+    return image.to_string(encoding="unicode").encode("utf-8")
 
 
 def scan_wifi():
@@ -1299,6 +1326,25 @@ class StoryBoxAPIHandler(BaseHTTPRequestHandler):
         raise APIError("not_found", "Local API endpoint not found", 404)
 
     def do_GET(self):
+        if urlparse(self.path).path == "/device/qr.svg":
+            try:
+                body = device_pairing_qr_svg()
+            except Exception as exc:
+                print(f"[storybox-api] QR generation failed: {exc!r}", flush=True)
+                self.send_json(503, {
+                    "error": "qr_unavailable",
+                    "message": "Device QR code is unavailable",
+                })
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if urlparse(self.path).path == "/console":
             page = Path(__file__).parent / "web" / "api_console.html"
             try:
