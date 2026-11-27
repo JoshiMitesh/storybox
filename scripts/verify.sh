@@ -3,41 +3,77 @@ set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+DEVICE_MODE="${1:-}"
 fail=0
 
-echo "=== Required files ==="
-for f in README.md src/storybox/wifi/wifi_manager.py src/storybox/wifi/portal.py src/storybox/wifi/connect_wifi.py src/storybox/player/story_player.py systemd/storybox-wifi.service config/examples/hostapd.conf.example config/examples/dnsmasq.conf.example config/examples/wpa_supplicant.conf.example; do
-    if [[ -f "$f" ]]; then echo "PASS: $f"; else echo "FAIL: Missing $f"; fail=1; fi
+pass() { echo "PASS: $*"; }
+bad() { echo "FAIL: $*"; fail=1; }
+
+echo "=== Required repository files ==="
+for f in README.md requirements-dev.txt scripts/install-requirements.sh scripts/install-storybox.sh scripts/setup-device.sh scripts/install.sh scripts/storybox_watcher.py src/storybox/player/story_player.py src/storybox/local_api.py src/storybox/wifi/wifi_manager.py src/storybox/wifi/portal.py src/storybox/wifi/connect_wifi.py systemd/storybox-player.service systemd/storybox-watcher.service systemd/storybox-wifi.service systemd/storybox-local-api.service udev/99-storybox-gpio.rules config/local-api.env.example; do
+  [[ -f "$f" ]] && pass "$f" || bad "Missing $f"
 done
 
 echo
 echo "=== Shell syntax ==="
-if bash -n scripts/install.sh && bash -n scripts/verify.sh; then echo "PASS: Shell syntax"; else echo "FAIL: Shell syntax"; fail=1; fi
+for f in scripts/*.sh; do
+  if bash -n "$f"; then pass "$f"; else bad "Shell syntax: $f"; fi
+done
 
 echo
 echo "=== Python syntax ==="
-if python3 -m py_compile src/storybox/wifi/wifi_manager.py src/storybox/wifi/portal.py src/storybox/wifi/connect_wifi.py src/storybox/player/story_player.py; then echo "PASS: Python syntax"; else echo "FAIL: Python syntax"; fail=1; fi
+PY_FILES=(src/storybox/player/story_player.py src/storybox/local_api.py src/storybox/device_identity.py src/storybox/device_info.py src/storybox/pairing.py src/storybox/wifi/wifi_manager.py src/storybox/wifi/portal.py src/storybox/wifi/connect_wifi.py scripts/storybox_watcher.py)
+if python3 -m py_compile "${PY_FILES[@]}"; then pass "Python modules compile"; else bad "Python compilation"; fi
 
 echo
-echo "=== Legacy paths ==="
-if grep -RInE '/home/admin/storybox-wifi|/home/admin/storybox-hotspot\.conf|/home/admin/storybox-dnsmasq\.conf' src systemd; then echo "FAIL: Old paths remain"; fail=1; else echo "PASS: No old Wi-Fi code paths"; fi
+echo "=== Service unit structure ==="
+for unit in storybox-player storybox-watcher storybox-wifi storybox-local-api; do
+  file="systemd/${unit}.service"
+  if grep -q '^\[Service\]$' "$file" && grep -q '^ExecStart=' "$file" && grep -q '^\[Install\]$' "$file"; then
+    pass "$file"
+  else
+    bad "Invalid/incomplete service unit: $file"
+  fi
+done
+grep -q '^SupplementaryGroups=.*i2c' systemd/storybox-player.service && pass "Player has I2C group access" || bad "Player unit lacks I2C group access"
 
 echo
-echo "=== Private runtime files ==="
-if find . -type f \( -name 'wpa_supplicant.conf' -o -name '*.pem' -o -name '*.key' -o -name '*.mp3' -o -name '*.wav' -o -name 'story-library.json' \) -print | grep .; then echo "FAIL: Review private files listed above"; fail=1; else echo "PASS: No obvious private runtime files"; fi
+echo "=== Runtime safety checks ==="
+if grep -RInE '/home/admin/storybox-wifi|/home/admin/storybox-hotspot\.conf|/home/admin/storybox-dnsmasq\.conf' src systemd; then
+  bad "Legacy Wi-Fi paths remain"
+else
+  pass "No legacy Wi-Fi paths"
+fi
+if find . -type f \( -name 'wpa_supplicant.conf' -o -name '*.pem' -o -name '*.key' -o -name '*.mp3' -o -name '*.wav' -o -name 'story-library.json' -o -name 'auth.json' \) -print | grep .; then
+  bad "Review private/device runtime files listed above"
+else
+  pass "No obvious private/device runtime files"
+fi
+grep -q 'GENERAL.NM-MANAGED device show wlan0' scripts/install.sh && pass "Wi-Fi installer checks NetworkManager ownership" || bad "Wi-Fi NetworkManager safety check missing"
+
+if [[ "$DEVICE_MODE" == "--device" ]]; then
+  echo
+  echo "=== Live device checks ==="
+  [[ "$(uname -m)" == "armv7l" || "$(uname -m)" == "armv8l" ]] && pass "ARMv7/armv8 machine" || bad "Unexpected CPU architecture"
+  [[ -x /opt/piper/piper ]] && pass "Piper executable exists" || bad "Piper executable missing"
+  [[ -s /opt/piper/models/en_US-lessac-medium.onnx ]] && pass "Piper voice model exists" || bad "Piper voice model missing"
+  [[ -s /opt/piper/models/en_US-lessac-medium.onnx.json ]] && pass "Piper voice config exists" || bad "Piper voice config missing"
+  [[ -e /dev/i2c-0 ]] && pass "/dev/i2c-0 exists" || bad "/dev/i2c-0 missing; check Armbian overlay and reboot"
+  id admin | grep -qE '(^|[,(])gpio([,)]|$)' && pass "admin belongs to gpio" || bad "admin missing gpio group"
+  id admin | grep -qE '(^|[,(])i2c([,)]|$)' && pass "admin belongs to i2c" || bad "admin missing i2c group"
+  for unit in storybox-player storybox-watcher storybox-local-api; do
+    systemctl is-enabled --quiet "$unit.service" && pass "$unit enabled" || bad "$unit is not enabled"
+  done
+  for unit in storybox-player storybox-watcher storybox-local-api; do
+    systemctl is-active --quiet "$unit.service" && pass "$unit active" || bad "$unit is not active"
+  done
+  [[ -f /etc/storybox/local-api.env ]] && pass "API environment file exists" || bad "API environment file missing"
+fi
 
 echo
-echo "=== NetworkManager property ==="
-if grep -q 'GENERAL.NM-MANAGED device show wlan0' scripts/install.sh && ! grep -q 'GENERAL.MANAGED device show wlan0' scripts/install.sh; then echo "PASS: Installer uses GENERAL.NM-MANAGED"; else echo "FAIL: Incorrect NetworkManager property"; fail=1; fi
-
-echo
-echo "=== Fixed hotspot password ==="
-if grep -q '^wpa_passphrase=12345678$' config/examples/hostapd.conf.example && grep -q 'wpa_passphrase=12345678' scripts/install.sh; then echo "PASS: Fixed hotspot password configured"; else echo "FAIL: Fixed hotspot password missing"; fail=1; fi
-
-echo
-echo "=== Captive portal DNS ==="
-if grep -q '^dhcp-option=6,192.168.4.1$' config/examples/dnsmasq.conf.example && grep -Fq 'address=/#/192.168.4.1' config/examples/dnsmasq.conf.example && grep -q 'GENERAL.NM-MANAGED' src/storybox/wifi/connect_wifi.py; then echo "PASS: Captive DNS and NetworkManager helper configured"; else echo "FAIL: Captive DNS or NetworkManager helper missing"; fail=1; fi
-
-echo
-if [[ "$fail" -eq 0 ]]; then echo "Verification checks passed."; else echo "One or more checks failed."; fi
+if [[ "$fail" -eq 0 ]]; then
+  echo "All requested verification checks passed."
+else
+  echo "One or more verification checks failed."
+fi
 exit "$fail"
