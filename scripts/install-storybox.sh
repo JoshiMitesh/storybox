@@ -153,8 +153,6 @@ udevadm control --reload-rules
 udevadm trigger --subsystem-match=gpio || true
 systemctl daemon-reload
 systemctl enable storybox-player.service storybox-watcher.service storybox-local-api.service
-# Keep Wi-Fi service installed but disabled until wlan0/wlan1 and local recovery are confirmed.
-systemctl disable storybox-wifi.service >/dev/null 2>&1 || true
 
 echo
 echo "Installation complete."
